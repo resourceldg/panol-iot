@@ -81,6 +81,10 @@ services:
       PANOL_DSN: postgresql://${POSTGRES_USER:-panol}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-panol}
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
+      # El broker local es anónimo y las ignora; van igual para que el puente
+      # se ejercite con el mismo camino que usa contra el broker del homelab.
+      MQTT_USER: ${MQTT_USER:-panol-servidor}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-cambiar-servidor-panol}
       TZ: ${TZ:-America/Argentina/Buenos_Aires}
     depends_on:
       postgres:
