@@ -10,22 +10,70 @@ estados de sesiones** y deriva alarmas/tickets a EMATP.
 ## Estructura
 
 ```
-server/          Cerebro (Etapa 1, corre local)
-  engine/        Máquina de estados PURA (sin transporte ni DB)
-  api/           Shell HTTP (Flask) — curl-testeable
-  db/            SQLite (6 tablas) + recuperación al reinicio
-  adapters/      emisor_ematp.py (webhook aislado)
-  tests/         Simulador de escenarios (docs/DISENO.md §5)
+server/            Cerebro
+  engine/          Máquina de estados PURA (sin transporte ni DB)
+  db/              PostgreSQL: esquema, atribución por timestamp, idempotencia
+  servicio.py      Une motor + persistencia
+  api/app.py       Shell HTTP (Flask) — curl-testeable
+  puente_mqtt.py   Shell MQTT — mismo motor, otro transporte
+  adapters/        emisor_ematp.py (webhook aislado) — etapa posterior
+  tests/           Simulador de escenarios (docs/DISENO.md §5)
 firmware/
-  nodo_panol/    ESP32 #1 (migrado del prototipo Documents/Door)
-  nodo_armarios/ ESP32 #2 (MCP23017 + IR) — etapa posterior
-docs/            Especificación v1.0 + diseño
+  nodo_panol/      ESP32 #1: FSM local, cola en flash, WiFi
+  nodo_armarios/   ESP32 #2 (MCP23017 + IR) — etapa posterior
+stack/mosquitto/   Config del broker
+docs/              Especificación v1.0 + diseño
 ```
+
+El motor no sabe que existen HTTP ni MQTT: `api/app.py` y `puente_mqtt.py` son dos cáscaras
+sobre el mismo `servicio.ingerir()`. Agregar un transporte no toca la lógica de auditoría.
+
+## Levantar el stack
+
+```bash
+cp .env.example .env      # ajustar POSTGRES_PASSWORD y puertos
+docker compose up -d
+```
+
+Ningún servicio publica su puerto por defecto — están tunelizados para otras cosas. Todo lo
+expuesto al host vive en el bloque 18000 y se configura en `.env`:
+
+| Servicio | Host | Interno |
+|---|---|---|
+| API / panel | 18500 | 18500 |
+| MQTT | 18830 | 1883 |
+| MQTT websockets | 19001 | 9001 |
+| Node-RED | 18800 | 1880 |
+| PostgreSQL | 15432 (solo localhost) | 5432 |
+
+## Topics MQTT
+
+```
+panol/<ubicacion_id>/<nodo_id>/evento/<tipo>   nodo     -> servidor
+panol/<ubicacion_id>/<nodo_id>/heartbeat       nodo     -> servidor
+panol/<ubicacion_id>/alarma/<codigo>           servidor -> Node-RED
+panol/<ubicacion_id>/sesion                    servidor -> Node-RED
+```
+
+Todo con QoS 1. Como "al menos una vez" admite duplicados por diseño, la idempotencia por
+`event_id` es parte del contrato, no una precaución.
+
+## Tests
+
+```bash
+PANOL_DSN=postgresql://panol:panol@localhost:15432/panol \
+  .venv/bin/python -m unittest discover -s server/tests -t server
+```
+
+Corren contra un PostgreSQL real: las garantías que más importan (el índice único parcial de
+"una sesión activa por ubicación") las da el motor de base, no el código.
 
 ## Hoja de ruta
 
-- **Etapa 1:** server local + validar la máquina de estados con el simulador (sin hardware).
-- **Etapa 2:** Mosquitto + Node-RED en homelab, expuesto LAN + WLAN; firmware real de los nodos.
+- **Etapa 1:** stack local + validar la máquina de estados con el simulador, y probar RFID,
+  PIR y reed sobre el ESP32 real.
+- **Etapa 2:** despliegue en el homelab, expuesto LAN + WLAN (admins); nodo de armarios.
+- **Etapa 3:** integración con EMATP (webhook de salida).
 
 ## Mapa de pines — nodo pañol (ESP32 #1, WROOM)
 

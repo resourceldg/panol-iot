@@ -1,0 +1,109 @@
+# Stack local del sistema de pañoles.
+#
+#   postgres    fuente de verdad de la auditoría
+#   mosquitto   broker MQTT al que publican los nodos
+#   api         shell HTTP (spec §11) + panel de consulta para admins
+#   puente      suscriptor MQTT que alimenta el MISMO motor que la API
+#   nodered     dashboard y automatizaciones
+#
+# `api` y `puente` corren la misma imagen con distinto comando. Son dos
+# procesos escribiendo en Postgres a la vez, y por eso las garantías de
+# unicidad viven en índices de la base y no en el código.
+#
+# PUERTOS: los publicados al host están en el bloque 18000 porque los
+# defaults del equipo están tunelizados. Ver .env.example.
+
+name: panol
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: panol-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-panol}
+      POSTGRES_USER: ${POSTGRES_USER:-panol}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?definir POSTGRES_PASSWORD en .env}
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    ports:
+      - "127.0.0.1:${PUERTO_POSTGRES:-15432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # Los demás servicios esperan a que la base acepte consultas, no solo
+      # a que el contenedor exista.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-panol} -d ${POSTGRES_DB:-panol}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: panol-mosquitto
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    ports:
+      - "${PUERTO_MQTT:-18830}:1883"
+      - "${PUERTO_MQTT_WS:-19001}:9001"
+    volumes:
+      - ./stack/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+
+  api:
+    build: ./server
+    container_name: panol-api
+    restart: unless-stopped
+    environment:
+      PANOL_DSN: postgresql://${POSTGRES_USER:-panol}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-panol}
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    ports:
+      - "${PUERTO_API:-18500}:18500"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Crea el esquema y corre la recuperación post-corte antes de servir.
+    command: >
+      sh -c "python -c 'import api.app as a; a.preparar()' &&
+             python -m gunicorn --bind 0.0.0.0:18500 --workers 2 api.app:app"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:18500/salud')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  puente:
+    build: ./server
+    container_name: panol-puente-mqtt
+    restart: unless-stopped
+    environment:
+      PANOL_DSN: postgresql://${POSTGRES_USER:-panol}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-panol}
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    command: ["python", "puente_mqtt.py"]
+
+  nodered:
+    image: nodered/node-red:latest
+    container_name: panol-nodered
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    ports:
+      - "${PUERTO_NODERED:-18800}:1880"
+    volumes:
+      - nodered_data:/data
+    depends_on:
+      - mosquitto
+
+volumes:
+  postgres_data:
+  mosquitto_data:
+  mosquitto_log:
+  nodered_data:

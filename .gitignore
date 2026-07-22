@@ -1,6 +1,9 @@
 __pycache__/
 *.pyc
+.env
 *.db
+*.db-wal
+*.db-shm
 *.sqlite3
 cola.log
 .venv/
