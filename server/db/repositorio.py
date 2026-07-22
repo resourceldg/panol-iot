@@ -86,8 +86,18 @@ def registrar_heartbeat(
     uptime_s: int | None = None,
     rssi: int | None = None,
     modo_degradado: bool = False,
-) -> None:
+) -> bool:
+    """Registra el heartbeat. Devuelve True si el nodo ENTRÓ en modo degradado.
+
+    La transición (no el estado sostenido) es lo que dispara la alarma
+    MODO_DEGRADADO una sola vez por episodio: un nodo degradado manda un
+    heartbeat por minuto y no debe generar una alarma por minuto.
+    """
     asegurar_ubicacion(conn, ubicacion_id)
+    fila = conn.execute(
+        "SELECT modo_degradado FROM nodos WHERE id = %s", (nodo_id,)
+    ).fetchone()
+    antes = bool(fila["modo_degradado"]) if fila else False
     conn.execute(
         """
         INSERT INTO nodos (id, ubicacion_id, rol, ultimo_heartbeat,
@@ -101,6 +111,35 @@ def registrar_heartbeat(
         """,
         (nodo_id, ubicacion_id, rol, ahora(), modo_degradado, uptime_s, rssi),
     )
+    return modo_degradado and not antes
+
+
+def estado_puerta_actual(
+    conn: psycopg.Connection, ubicacion_id: str
+) -> tuple[str | None, datetime | None]:
+    """Último estado del reed y desde cuándo. El reed solo reporta cambios,
+    así que el último evento ABIERTO marca cuándo empezó a estar abierta."""
+    fila = conn.execute(
+        "SELECT estado_reed, timestamp FROM eventos_puerta"
+        " WHERE ubicacion_id = %s ORDER BY timestamp DESC, id DESC LIMIT 1",
+        (ubicacion_id,),
+    ).fetchone()
+    if not fila:
+        return None, None
+    return fila["estado_reed"], fila["timestamp"]
+
+
+def alarma_existe_desde(
+    conn: psycopg.Connection, ubicacion_id: str, codigo: str, desde: datetime
+) -> bool:
+    """¿Ya hay una alarma de este código desde `desde`? Implementa el one-shot
+    de estados sostenidos sin guardar un flag: se lee de la propia tabla."""
+    fila = conn.execute(
+        "SELECT 1 FROM alarmas WHERE ubicacion_id = %s AND codigo = %s"
+        " AND timestamp >= %s LIMIT 1",
+        (ubicacion_id, codigo, desde),
+    ).fetchone()
+    return fila is not None
 
 
 def nodos_sin_heartbeat(conn: psycopg.Connection, umbral_s: int = 300) -> list[dict]:

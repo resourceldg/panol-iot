@@ -40,6 +40,17 @@ def sincronizado():
     return _sincronizado
 
 
+def hora_local():
+    """Hora argentina "HH:MM:SS" para los logs, o None si no hay NTP.
+
+    En banco (sin red) devuelve None y el log cae al uptime.
+    """
+    if not _sincronizado:
+        return None
+    t = time.localtime(time.time() + OFFSET_S)
+    return "%02d:%02d:%02d" % (t[3], t[4], t[5])
+
+
 def ahora_iso():
     """Timestamp ISO-8601 con offset, o None si el nodo no esta en hora.
 

@@ -7,3 +7,5 @@ __pycache__/
 *.sqlite3
 cola.log
 .venv/
+firmware/nodo_panol/secrets.py
+secrets.py

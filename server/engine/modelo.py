@@ -25,6 +25,7 @@ SEVERIDADES = {
     "PRESENCIA_SIN_SESION": "critica",
     "ARMARIO_SIN_SESION": "critica",
     "PUERTA_ABIERTA_SIN_GENTE": "alta",
+    "PUERTA_ABIERTA_PROLONGADA": "alta",
     "NODO_SIN_HEARTBEAT": "alta",
     "MODO_DEGRADADO": "media",
     "SESION_INCONSISTENTE": "baja",
@@ -36,6 +37,7 @@ class Config:
     """Parámetros de la spec §12. Se pasan al motor, no se leen de globals."""
 
     t_ausencia_s: int = 15 * 60
+    t_puerta_abierta_s: int = 5 * 60   # Puerta abierta prolongada, con o sin gente
     hora_fin_jornada: int = 22
 
 

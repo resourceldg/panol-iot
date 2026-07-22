@@ -433,6 +433,86 @@ class TestMultiUbicacion(BaseEscenario):
             )
 
 
+class TestPuertaAbiertaProlongada(BaseEscenario):
+    """Puerta abierta mucho tiempo, con o sin gente (independiente de ausencia)."""
+
+    def abrir_puerta(self, ts, ubicacion=LAB01):
+        self.puerta("ABIERTO", ts, ubicacion)
+
+    def test_alarma_tras_el_umbral_aunque_haya_actividad(self):
+        """Con sesión y movimiento, pero puerta abierta > umbral → alarma.
+
+        Es el caso que PUERTA_ABIERTA_SIN_GENTE no cubre: hay gente, pero la
+        puerta quedó abierta (trabada u olvidada).
+        """
+        self.ingresa(ANA, en(0))
+        self.abrir_puerta(en(1))
+        self.pir(en(4))  # hay actividad: la tarea de ausencia no dispararía
+
+        # A los 3 min de abierta (umbral 5) todavía no.
+        self._tiempo_congelado(en(3))
+        servicio.verificar_puertas_abiertas(self.conn, self.cfg)
+        self.assertEqual(self.codigos_alarma(), [])
+
+        # A los 7 min de abierta, sí.
+        self._tiempo_congelado(en(8))
+        servicio.verificar_puertas_abiertas(self.conn, self.cfg)
+        self.assertIn("PUERTA_ABIERTA_PROLONGADA", self.codigos_alarma())
+
+    def test_one_shot_no_repite_hasta_cerrar(self):
+        self.ingresa(ANA, en(0))
+        self.abrir_puerta(en(1))
+        self._tiempo_congelado(en(10))
+        servicio.verificar_puertas_abiertas(self.conn, self.cfg)
+        servicio.verificar_puertas_abiertas(self.conn, self.cfg)
+        prolongadas = [c for c in self.codigos_alarma()
+                       if c == "PUERTA_ABIERTA_PROLONGADA"]
+        self.assertEqual(len(prolongadas), 1, "una sola por episodio")
+
+    def test_se_rearma_tras_cerrar_y_reabrir(self):
+        self.ingresa(ANA, en(0))
+        self.abrir_puerta(en(1))
+        self._tiempo_congelado(en(10))
+        servicio.verificar_puertas_abiertas(self.conn, self.cfg)
+        self.puerta("CERRADO", en(11))
+        self.abrir_puerta(en(12))
+        self._tiempo_congelado(en(20))
+        servicio.verificar_puertas_abiertas(self.conn, self.cfg)
+        prolongadas = [c for c in self.codigos_alarma()
+                       if c == "PUERTA_ABIERTA_PROLONGADA"]
+        self.assertEqual(len(prolongadas), 2, "nuevo episodio, nueva alarma")
+
+    def test_puerta_cerrada_no_alarma(self):
+        self.ingresa(ANA, en(0))
+        self.puerta("CERRADO", en(1))
+        self._tiempo_congelado(en(30))
+        servicio.verificar_puertas_abiertas(self.conn, self.cfg)
+        self.assertEqual(self.codigos_alarma(), [])
+
+    def _tiempo_congelado(self, momento):
+        """La tarea usa repositorio.ahora(); se lo fija al instante deseado."""
+        self._orig_ahora = repositorio.ahora
+        repositorio.ahora = lambda: momento
+        self.addCleanup(setattr, repositorio, "ahora", self._orig_ahora)
+
+
+class TestModoDegradado(BaseEscenario):
+    def hb(self, degradado, nodo="panol-lab01-puerta"):
+        return repositorio.registrar_heartbeat(
+            self.conn, nodo_id=nodo, ubicacion_id=LAB01, rol="puerta",
+            modo_degradado=degradado,
+        )
+
+    def test_entrar_en_degradado_devuelve_transicion(self):
+        self.assertTrue(self.hb(True), "primer degradado = transición")
+        self.assertFalse(self.hb(True), "seguir degradado NO es transición")
+
+    def test_recuperar_y_volver_es_nueva_transicion(self):
+        self.assertTrue(self.hb(True))
+        self.assertFalse(self.hb(False), "recuperarse no es entrar")
+        self.assertTrue(self.hb(True), "volver a degradado = nueva transición")
+
+
 class TestCierreDeJornada(BaseEscenario):
     def test_fin_de_jornada_cierra_la_sesion(self):
         self.ingresa(ANA, en(0))

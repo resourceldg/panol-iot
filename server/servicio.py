@@ -57,6 +57,41 @@ def _sesion_para(conn, evento: m.Evento) -> m.Sesion | None:
     return repositorio.sesion_en_curso(conn, evento.ubicacion_id)
 
 
+def verificar_puertas_abiertas(conn, cfg: m.Config | None = None) -> list:
+    """Corre cada minuto: alarma si una puerta lleva mucho tiempo abierta.
+
+    Independiente de la sesión y de la actividad (a diferencia de la tarea
+    de ausencia). El one-shot se resuelve mirando si ya hubo una alarma
+    desde que la puerta abrió; se rearma solo cuando se cierra.
+    """
+    cfg = cfg or m.Config()
+    ts = repositorio.ahora()
+    efectos_totales = []
+
+    filas = conn.execute("SELECT id FROM ubicaciones").fetchall()
+    for fila in filas:
+        ubic = fila["id"]
+        estado, desde = repositorio.estado_puerta_actual(conn, ubic)
+        if estado != "ABIERTO":
+            continue
+        ya = repositorio.alarma_existe_desde(
+            conn, ubic, "PUERTA_ABIERTA_PROLONGADA", desde
+        )
+        evento = m.Evento(
+            tipo="tarea_puerta_abierta",
+            ubicacion_id=ubic,
+            ts=ts,
+            datos={"reed_actual": estado, "abierta_desde": desde, "ya_alarmado": ya},
+        )
+        sesion = repositorio.sesion_en_curso(conn, ubic)
+        efectos = decidir(evento, sesion, cfg)
+        if efectos:
+            repositorio.aplicar(conn, efectos)
+            efectos_totales.extend(efectos)
+
+    return efectos_totales
+
+
 def recuperar_al_arrancar(
     conn, cfg: m.Config | None = None
 ) -> list:

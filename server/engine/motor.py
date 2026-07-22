@@ -197,6 +197,35 @@ def _tarea_ausencia(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
     ]
 
 
+def _tarea_puerta_abierta(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
+    """Puerta físicamente abierta demasiado tiempo, HAYA O NO gente.
+
+    Distinta de PUERTA_ABIERTA_SIN_GENTE (esa exige ausencia): esta salta
+    aunque haya actividad, para el caso de puerta trabada o dejada abierta
+    a propósito. Vale con o sin sesión: es un hecho físico, no de sesión.
+
+    Quien llama provee `abierta_desde` (cuándo abrió) y `ya_alarmado` (si ya
+    hubo alarma en este episodio), porque son datos de la base. El one-shot
+    lo garantiza `ya_alarmado`: se rearma solo cuando la puerta se cierra.
+    """
+    if evento.datos.get("reed_actual") != "ABIERTO":
+        return []
+    abierta_desde = evento.datos.get("abierta_desde")
+    if abierta_desde is None or evento.datos.get("ya_alarmado"):
+        return []
+    if (evento.ts - abierta_desde).total_seconds() < cfg.t_puerta_abierta_s:
+        return []
+    return [
+        Alarma(
+            evento.ubicacion_id,
+            "PUERTA_ABIERTA_PROLONGADA",
+            evento.ts,
+            sesion_id=sesion.id if sesion else None,
+            detalle={"abierta_desde": abierta_desde.isoformat()},
+        )
+    ]
+
+
 def _tarea_fin_jornada(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
     """Cierre administrativo. Nadie queda como responsable de un día para otro."""
     if sesion is None:
@@ -235,6 +264,7 @@ _MANEJADORES = {
     "pir": _pir,
     "armario": _armario,
     "tarea_ausencia": _tarea_ausencia,
+    "tarea_puerta_abierta": _tarea_puerta_abierta,
     "tarea_fin_jornada": _tarea_fin_jornada,
     "tarea_recuperacion": _tarea_recuperacion,
 }
