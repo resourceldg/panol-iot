@@ -95,6 +95,17 @@ MQTT_PASS = "cambiar-nodo-puerta"
 USAR_RED = True
 
 T_CONEXION_WIFI_MS = 15_000     # Espera maxima al asociarse, solo al bootear
+                                # (y ventana de cada reintento en caliente)
+T_REINTENTO_WIFI_MS = 30_000    # Entre reasociaciones cuando se cae el AP.
+                                # Reintentar mas seguido no acelera nada: el
+                                # driver tarda lo suyo y el nodo tiene que
+                                # seguir mirando los sensores mientras tanto.
+T_RESYNC_NTP_MS = 6 * 3_600_000  # Resync de reloj cada 6 h. El ESP32 no tiene
+                                # RTC con pila y deriva; en la cola offline el
+                                # timestamp es lo que atribuye el evento a su
+                                # sesion.
+T_TIMEOUT_NTP_S = 2             # Acotado: sin esto, un NTP inalcanzable puede
+                                # bloquear el bucle principal ~30 s
 T_TIMEOUT_HTTP_S = 3            # Corto: la red nunca debe demorar la puerta
 T_HEARTBEAT_MS = 60_000         # Señal de vida (spec seccion 12)
 T_REFRESCO_WHITELIST_MS = 900_000   # 15 min

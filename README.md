@@ -97,6 +97,13 @@ PANOL_DSN=postgresql://panol:panol@localhost:15432/panol \
 Corren contra un PostgreSQL real: las garantías que más importan (el índice único parcial de
 "una sesión activa por ubicación") las da el motor de base, no el código.
 
+La capa de red del nodo se prueba sin hardware ni MicroPython (dobles de `network`,
+`urequests` y los `ticks_*`, simulando el bucle principal a 50 ms):
+
+```bash
+python -m unittest discover -s firmware/tests -t .
+```
+
 ## Hoja de ruta
 
 - **Etapa 1:** stack local + validar la máquina de estados con el simulador, y probar RFID,

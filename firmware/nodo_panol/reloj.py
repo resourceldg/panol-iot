@@ -13,6 +13,8 @@
 
 import time
 
+import config
+
 # Argentina no tiene horario de verano, asi que alcanza un offset fijo.
 OFFSET_S = -3 * 3600
 SUFIJO_TZ = "-03:00"
@@ -21,11 +23,23 @@ _sincronizado = False
 
 
 def sincronizar():
-    """Pide la hora por NTP. Devuelve True si quedo en hora."""
+    """Pide la hora por NTP. Devuelve True si quedo en hora.
+
+    Se llama al bootear y despues cada tanto desde `red.tareas()`, que corre
+    con la FSM en reposo. Por eso el timeout importa: con el valor por defecto
+    de MicroPython, un NTP inalcanzable bloquea el bucle decenas de segundos y
+    en ese rato el nodo no mira ni el reed ni el lector.
+    """
     global _sincronizado
     try:
         import ntptime
 
+        try:
+            ntptime.timeout = config.T_TIMEOUT_NTP_S
+        except AttributeError:
+            # Puertos viejos de MicroPython no exponen el timeout. Se sigue
+            # igual: mejor la hora con riesgo de demora que sin hora.
+            pass
         ntptime.settime()
         _sincronizado = True
         print("[RELOJ] en hora por NTP:", ahora_iso())
