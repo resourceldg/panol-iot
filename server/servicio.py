@@ -237,7 +237,9 @@ def _tarea_por_ubicacion(conn, cfg: m.Config, ts) -> list:
 def _tarea_nodos_mudos(conn, cfg: m.Config, ts) -> list:
     """Alarma por cada nodo que dejó de latir, una vez por episodio."""
     efectos_totales = []
-    desde = ts - timedelta(seconds=cfg.t_recordatorio_alarma_s)
+    # Ventana de infraestructura, no la de presencia: el nodo mudo se recuerda
+    # cada hora, no cada 15 minutos.
+    desde = ts - timedelta(seconds=cfg.t_recordatorio_infra_s)
 
     for nodo in repositorio.nodos_sin_heartbeat(conn, cfg.t_sin_heartbeat_s):
         ubic = nodo["ubicacion_id"]

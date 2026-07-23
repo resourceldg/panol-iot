@@ -82,6 +82,12 @@ class Config:
     # el episodio terminó.
     t_recordatorio_alarma_s: int = field(
         default_factory=lambda: _param("PANOL_T_RECORDATORIO_S", 15 * 60))
+    # Recordatorio para condiciones de INFRAESTRUCTURA (nodo mudo). Más espaciado
+    # que el de presencia: un nodo caído no cambia de un cuarto de hora al otro,
+    # y avisar cada 15 min durante un fin de semana serían ~190 tickets por algo
+    # que sigue exactamente igual de apagado. Con saberlo cada hora alcanza.
+    t_recordatorio_infra_s: int = field(
+        default_factory=lambda: _param("PANOL_T_RECORDATORIO_INFRA_S", 60 * 60))
 
 
 @dataclass
