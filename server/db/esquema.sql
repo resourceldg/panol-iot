@@ -189,3 +189,8 @@ ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS reanudaciones INTEGER NOT NULL DEF
 CREATE INDEX IF NOT EXISTS ix_eventos_procesados_recibido ON eventos_procesados (recibido);
 CREATE INDEX IF NOT EXISTS ix_eventos_armario_ts          ON eventos_armario (timestamp);
 CREATE INDEX IF NOT EXISTS ix_alarmas_ts                  ON alarmas (timestamp);
+
+-- Cuándo se intentó mandar esta alarma a EMATP por última vez. Sin este dato el
+-- reintento solo puede ser "cada vuelta", y contra un plan gratuito (Vercel
+-- Hobby + Neon) eso despierta una función y una base cada minuto para nada.
+ALTER TABLE alarmas ADD COLUMN IF NOT EXISTS ultimo_intento TIMESTAMPTZ;

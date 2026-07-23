@@ -25,14 +25,21 @@ URL = os.environ.get("EMATP_URL")            # https://<dominio>/api/integracion
 TOKEN = os.environ.get("EMATP_TOKEN")
 TIMEOUT_S = float(os.environ.get("EMATP_TIMEOUT_S", "8"))
 
-# Cuántas alarmas se despachan por vuelta. Acotado para que una acumulación de
-# días no monopolice la vuelta del planificador ni inunde a EMATP de golpe.
+# Cuántas alarmas se mandan por pedido. Van TODAS en un solo POST: EMATP corre
+# en Vercel Hobby, donde cada llamado es una invocación de función y un despertar
+# de la base Neon. Veinte alarmas sueltas serían veinte de cada cosa. El tope
+# tiene que ser <= al que acepta EMATP (25).
 LOTE = int(os.environ.get("EMATP_LOTE", "20"))
 
-# Después de esto se deja de reintentar y la alarma queda visible como no
-# enviada. Con una vuelta por minuto son ~2 horas de insistencia: si en dos
-# horas EMATP no volvió, el problema no se arregla reintentando.
-MAX_REINTENTOS = int(os.environ.get("EMATP_MAX_REINTENTOS", "120"))
+# Reintento con espera creciente: 1, 2, 4, 8… minutos, hasta media hora. Contra
+# un plan gratuito, insistir cada minuto con algo que está fallando es la forma
+# más rápida de gastar la cuota sin resolver nada.
+ESPERA_BASE_S = int(os.environ.get("EMATP_ESPERA_BASE_S", "60"))
+ESPERA_MAX_S = int(os.environ.get("EMATP_ESPERA_MAX_S", "1800"))
+
+# Después de esto se deja de insistir y la alarma queda visible como no enviada.
+# Con la espera creciente, 24 intentos son más de diez horas.
+MAX_REINTENTOS = int(os.environ.get("EMATP_MAX_REINTENTOS", "24"))
 
 
 def habilitado() -> bool:
@@ -43,9 +50,9 @@ def log(*args):
     print("[EMATP]", *args, flush=True)
 
 
-def _post(alarma: dict) -> tuple[bool, str]:
-    """Manda una alarma. Devuelve (aceptada, detalle)."""
-    cuerpo = json.dumps(alarma, default=str).encode("utf-8")
+def _post(alarmas: list[dict]):
+    """Manda un LOTE en un solo pedido. Devuelve (aceptado, ids | detalle)."""
+    cuerpo = json.dumps({"alarmas": alarmas}, default=str).encode("utf-8")
     pedido = urllib.request.Request(
         URL,
         data=cuerpo,
@@ -58,7 +65,9 @@ def _post(alarma: dict) -> tuple[bool, str]:
     try:
         with urllib.request.urlopen(pedido, timeout=TIMEOUT_S) as respuesta:
             datos = json.loads(respuesta.read().decode("utf-8") or "{}")
-            return True, datos.get("numero_orden", "sin número")
+            # EMATP contesta una línea por alarma: puede aceptar unas y
+            # rechazar otras (una mal formada no invalida el lote).
+            return True, [r["id"] for r in datos.get("resultados", []) if r.get("ok")]
     except urllib.error.HTTPError as e:
         # 4xx: el pedido está mal y reintentarlo igual no lo va a arreglar…
         # salvo 401/403/429, que sí pueden ser transitorios (token que se está
@@ -85,43 +94,66 @@ def pendientes(conn, limite: int = LOTE) -> list[dict]:
         SELECT id, ubicacion_id, codigo, severidad, sesion_id, detalle,
                timestamp, reintentos
         FROM alarmas
-        WHERE NOT enviada_ematp AND reintentos < %s
+        WHERE NOT enviada_ematp
+          AND reintentos < %s
+          -- Espera creciente entre intentos: 1, 2, 4… minutos, con techo.
+          AND (ultimo_intento IS NULL
+               OR ultimo_intento < now() - make_interval(secs =>
+                    LEAST(%s * POWER(2, LEAST(reintentos, 10)), %s)))
         ORDER BY timestamp
         LIMIT %s
         """,
-        (MAX_REINTENTOS, limite),
+        (MAX_REINTENTOS, ESPERA_BASE_S, ESPERA_MAX_S, limite),
     ).fetchall()
 
 
 def despachar(conn, limite: int = LOTE) -> dict:
-    """Intenta enviar lo pendiente. Devuelve un resumen para el log."""
+    """Intenta enviar lo pendiente, en un solo pedido. Resumen para el log."""
     if not habilitado():
         return {}
 
-    enviadas, fallidas = 0, 0
-    for alarma in pendientes(conn, limite):
-        ok, detalle = _post(dict(alarma))
-        if ok:
-            conn.execute(
-                "UPDATE alarmas SET enviada_ematp = TRUE WHERE id = %s",
-                (alarma["id"],),
-            )
-            enviadas += 1
-            log("alarma", alarma["id"], alarma["codigo"], "->", detalle)
-        else:
-            # El contador es también la señal de alerta: una alarma con muchos
-            # reintentos es una que EMATP no está aceptando.
-            conn.execute(
-                "UPDATE alarmas SET reintentos = reintentos + 1 WHERE id = %s",
-                (alarma["id"],),
-            )
-            fallidas += 1
-            if alarma["reintentos"] == 0 or alarma["reintentos"] % 10 == 0:
-                log("alarma", alarma["id"], "no enviada:", detalle)
+    lote = pendientes(conn, limite)
+    if not lote:
+        return {}
+
+    ok, detalle = _post([dict(a) for a in lote])
+    ids = [a["id"] for a in lote]
+
+    if not ok:
+        # Falló el pedido entero: nadie se marca como enviada y todas suman un
+        # intento, con lo que la próxima espera es más larga.
+        conn.execute(
+            "UPDATE alarmas SET reintentos = reintentos + 1, ultimo_intento = now()"
+            " WHERE id = ANY(%s)",
+            (ids,),
+        )
+        if lote[0]["reintentos"] % 5 == 0:
+            log(len(ids), "alarmas sin enviar:", detalle)
+        return {"pendientes": len(ids)}
+
+    aceptadas = [i for i in ids if i in set(detalle)]
+    rechazadas = [i for i in ids if i not in set(detalle)]
+
+    if aceptadas:
+        conn.execute(
+            "UPDATE alarmas SET enviada_ematp = TRUE, ultimo_intento = now()"
+            " WHERE id = ANY(%s)",
+            (aceptadas,),
+        )
+        log(len(aceptadas), "alarmas -> tickets")
+    if rechazadas:
+        # Quedaron pendientes: una mal formada, o el lote cortado a la mitad
+        # por un error de EMATP. Se reintentan con espera creciente.
+        conn.execute(
+            "UPDATE alarmas SET reintentos = reintentos + 1, ultimo_intento = now()"
+            " WHERE id = ANY(%s)",
+            (rechazadas,),
+        )
+        log(len(rechazadas), "alarmas no aceptadas:", rechazadas)
 
     resumen = {}
-    if enviadas:
-        resumen["enviadas"] = enviadas
-    if fallidas:
-        resumen["pendientes"] = fallidas
+    if aceptadas:
+        resumen["enviadas"] = len(aceptadas)
+    if rechazadas:
+        resumen["pendientes"] = len(rechazadas)
     return resumen

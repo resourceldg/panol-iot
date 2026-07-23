@@ -33,6 +33,7 @@ class BaseEmisor(unittest.TestCase):
         self.conn.execute("TRUNCATE alarmas, ubicaciones RESTART IDENTITY CASCADE")
         repositorio.asegurar_ubicacion(self.conn, LAB01)
         self.enviadas = []
+        self.pedidos = 0
         # Doble de la red: habilita el módulo sin tocar variables de entorno.
         self._post_real = emisor_ematp._post
         self._habilitado_real = emisor_ematp.habilitado
@@ -42,11 +43,20 @@ class BaseEmisor(unittest.TestCase):
         emisor_ematp._post = self._post_real
         emisor_ematp.habilitado = self._habilitado_real
 
-    def responder(self, ok, detalle="TK-1"):
-        def _post(alarma):
-            self.enviadas.append(alarma)
-            return ok, detalle
+    def responder(self, ok, acepta=None):
+        """Doble de la red. `acepta` = ids que EMATP dice haber aceptado."""
+        def _post(alarmas):
+            self.enviadas.extend(alarmas)
+            self.pedidos += 1
+            if not ok:
+                return False, "sin conexión"
+            ids = [a["id"] for a in alarmas]
+            return True, ids if acepta is None else [i for i in ids if i in acepta]
         emisor_ematp._post = _post
+
+    def paso_el_tiempo(self):
+        """Simula la espera del backoff sin dormir el test."""
+        self.conn.execute("UPDATE alarmas SET ultimo_intento = NULL")
 
     def alarma(self, codigo="PRESENCIA_SIN_SESION", severidad="critica", hace_min=0):
         self.conn.execute(
@@ -89,6 +99,7 @@ class TestDespacho(BaseEmisor):
         emisor_ematp.despachar(self.conn)
         self.assertEqual([f["enviada_ematp"] for f in self.estado()], [False] * 3)
 
+        self.paso_el_tiempo()
         self.responder(True)
         self.assertEqual(emisor_ematp.despachar(self.conn), {"enviadas": 3})
         self.assertEqual([f["enviada_ematp"] for f in self.estado()], [True] * 3)
@@ -103,6 +114,51 @@ class TestDespacho(BaseEmisor):
             [a["codigo"] for a in self.enviadas],
             ["MODO_DEGRADADO", "PRESENCIA_SIN_SESION"],
         )
+
+    def test_todo_el_lote_viaja_en_un_solo_pedido(self):
+        """EMATP corre en Vercel Hobby: cada pedido es una invocación de función
+        y un despertar de la base. Veinte alarmas no pueden ser veinte pedidos."""
+        for _ in range(5):
+            self.alarma()
+        self.responder(True)
+
+        emisor_ematp.despachar(self.conn)
+
+        self.assertEqual(self.pedidos, 1, "mandó un pedido por alarma")
+        self.assertEqual(len(self.enviadas), 5)
+
+    def test_no_insiste_cada_minuto_con_algo_que_falla(self):
+        """Espera creciente: insistir a ciegas contra un plan gratuito es la
+        forma más rápida de gastar la cuota sin resolver nada."""
+        self.alarma()
+        self.responder(False)
+        emisor_ematp.despachar(self.conn)
+        self.assertEqual(self.pedidos, 1)
+
+        # Enseguida, sin que pase la espera: no vuelve a intentar.
+        self.assertEqual(emisor_ematp.despachar(self.conn), {})
+        self.assertEqual(self.pedidos, 1)
+
+        # Cumplida la espera, sí.
+        self.paso_el_tiempo()
+        emisor_ematp.despachar(self.conn)
+        self.assertEqual(self.pedidos, 2)
+
+    def test_lo_que_ematp_no_acepta_sigue_pendiente(self):
+        """Puede aceptar unas y rechazar otras: una mal formada no invalida el
+        lote, pero tampoco puede darse por enviada."""
+        self.alarma(codigo="MODO_DEGRADADO", hace_min=5)
+        self.alarma(codigo="PRESENCIA_SIN_SESION", hace_min=1)
+        ids = [f["id"] for f in self.estado()]
+        self.responder(True, acepta={ids[0]})
+
+        resumen = emisor_ematp.despachar(self.conn)
+
+        self.assertEqual(resumen, {"enviadas": 1, "pendientes": 1})
+        estado = {f["id"]: f for f in self.estado()}
+        self.assertTrue(estado[ids[0]]["enviada_ematp"])
+        self.assertFalse(estado[ids[1]]["enviada_ematp"])
+        self.assertEqual(estado[ids[1]]["reintentos"], 1)
 
     def test_deja_de_insistir_despues_del_tope(self):
         """Si en dos horas EMATP no volvió, el problema no se arregla insistiendo."""
@@ -121,6 +177,7 @@ class TestDespacho(BaseEmisor):
 
         emisor_ematp.despachar(self.conn, limite=2)
         self.assertEqual(len(self.enviadas), 2)
+        self.assertEqual(self.pedidos, 1)
 
     def test_sin_configurar_no_hace_nada(self):
         emisor_ematp.habilitado = self._habilitado_real   # sin EMATP_URL
