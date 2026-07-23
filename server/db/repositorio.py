@@ -260,6 +260,35 @@ def sesion_vigente_en(
     return _a_sesion(fila) if fila else None
 
 
+def sesion_reanudable(
+    conn: psycopg.Connection, ubicacion_id: str, uid_hex: str, ts: datetime,
+    ventana_s: int,
+) -> int | None:
+    """Turno del MISMO llavero, cerrado por ausencia hace poco.
+
+    Solo AUSENCIA y CIERRE_SISTEMA: un RELEVO significa que otro se hizo cargo
+    en el medio, y ahí el turno anterior terminó de verdad. Tampoco se reanuda
+    una sesión INCONSISTENTE — esa quedó marcada para revisión y reabrirla
+    borraría la marca.
+    """
+    fila = conn.execute(
+        """
+        SELECT id FROM sesiones
+        WHERE ubicacion_id = %s
+          AND uid_hex = %s
+          AND estado = 'COMPLETA'
+          AND motivo_cierre IN ('AUSENCIA', 'CIERRE_SISTEMA')
+          AND hora_fin IS NOT NULL
+          AND hora_fin > %s - make_interval(secs => %s)
+          AND hora_fin <= %s
+        ORDER BY hora_fin DESC
+        LIMIT 1
+        """,
+        (ubicacion_id, uid_hex, ts, ventana_s, ts),
+    ).fetchone()
+    return fila["id"] if fila else None
+
+
 # --- Aplicación de efectos ----------------------------------------------
 
 
@@ -296,6 +325,18 @@ def _aplicar_uno(conn: psycopg.Connection, e) -> None:
                     %s, %s, 'EN_CURSO')
             """,
             (e.ubicacion_id, e.uid_hex, e.uid_hex, e.ts, e.ts),
+        )
+
+    elif isinstance(e, m.ReanudarSesion):
+        # Vuelve a abrir el MISMO turno: se limpia el cierre y se cuenta la
+        # interrupción. La hora de inicio no se toca — el turno empezó cuando
+        # empezó, y eso es lo que la auditoría tiene que poder responder.
+        conn.execute(
+            "UPDATE sesiones SET estado = 'EN_CURSO', hora_fin = NULL,"
+            " motivo_cierre = NULL, ultima_actividad = %s,"
+            " reanudaciones = reanudaciones + 1,"
+            " alarmada_puerta_abierta = FALSE WHERE id = %s",
+            (e.ts, e.sesion_id),
         )
 
     elif isinstance(e, m.FinalizarSesion):

@@ -16,6 +16,8 @@ server/            Cerebro
   servicio.py      Une motor + persistencia
   api/app.py       Shell HTTP (Flask) — curl-testeable
   puente_mqtt.py   Shell MQTT — mismo motor, otro transporte
+  planificador.py  Latido: tareas periódicas del motor + purga diaria
+  retencion.py     Política de retención (docs/PERSISTENCIA.md)
   adapters/        emisor_ematp.py (webhook aislado) — etapa posterior
   tests/           Simulador de escenarios (docs/DISENO.md §5)
 firmware/
@@ -110,7 +112,8 @@ python -m unittest discover -s firmware/tests -t .
   PIR y reed sobre el ESP32 real. ✔
 - **Etapa 2:** despliegue en el homelab, expuesto LAN + WLAN (admins); nodo de armarios.
   Infra y credenciales listas; falta el tablero Node-RED y rotar las claves `cambiar-*`.
-- **Etapa 3:** integración con EMATP (webhook de salida).
+- **Etapa 3:** integración con EMATP (webhook de salida). Cada alarma es un ticket:
+  por eso se agrupan por episodio y no se purgan nunca (ver [docs/PERSISTENCIA.md](docs/PERSISTENCIA.md)).
 
 ## Mapa de pines — nodo pañol (ESP32 #1, WROOM)
 

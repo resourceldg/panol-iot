@@ -24,15 +24,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import retencion
 import servicio
 from db import repositorio
 from engine import modelo as m
 
 INTERVALO_S = int(os.environ.get("PANOL_INTERVALO_TAREAS_S", "60"))
 DSN = os.environ.get("PANOL_DSN")
+# La purga corre una vez por día, de madrugada: borrar también escribe, y no
+# hay motivo para hacerlo mientras el colegio está funcionando.
+HORA_PURGA = int(os.environ.get("PANOL_HORA_PURGA", "4"))
 
 # Misma clave arbitraria y estable para todas las instancias.
 LOCK_TAREAS = 0x70616E6F6C01
+LOCK_PURGA = 0x70616E6F6C02
 
 _conn = None
 
@@ -63,15 +68,40 @@ def _una_vuelta(conn, cfg) -> list:
         conn.execute("SELECT pg_advisory_unlock(%s)", (LOCK_TAREAS,))
 
 
+def _purga_diaria(conn, ultimo_dia):
+    """Aplica la retención una vez por día. Devuelve el día ya purgado."""
+    ahora = repositorio.ahora()
+    if ahora.hour != HORA_PURGA or ahora.date() == ultimo_dia:
+        return ultimo_dia
+
+    fila = conn.execute(
+        "SELECT pg_try_advisory_lock(%s) AS tomado", (LOCK_PURGA,)
+    ).fetchone()
+    if not fila["tomado"]:
+        return ultimo_dia
+    try:
+        borradas = retencion.purgar(conn)
+        log("purga:", borradas or "nada vencido")
+    finally:
+        conn.execute("SELECT pg_advisory_unlock(%s)", (LOCK_PURGA,))
+    return ahora.date()
+
+
 def main():
     cfg = m.Config()
     log("arrancado. Intervalo:", INTERVALO_S, "s |",
-        "ausencia:", cfg.t_ausencia_s, "s |",
-        "fin de jornada:", cfg.hora_fin_jornada, "h")
+        "ausencia:", cfg.t_ausencia_s // 60, "min |",
+        "quiescencia:", cfg.t_jornada_quiescente_s // 60, "min |",
+        "cierre por reloj:", cfg.hora_fin_jornada or "deshabilitado", "|",
+        "purga: {:02d}:00".format(HORA_PURGA))
+
+    ultimo_dia_purgado = None
 
     while True:
         try:
-            efectos = _una_vuelta(_conexion(), cfg)
+            conn = _conexion()
+            ultimo_dia_purgado = _purga_diaria(conn, ultimo_dia_purgado)
+            efectos = _una_vuelta(conn, cfg)
             for efecto in efectos:
                 nombre = type(efecto).__name__
                 if nombre == "Alarma":

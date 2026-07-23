@@ -35,7 +35,7 @@ def ingerir(
 
     sesion = _sesion_para(conn, evento)
     _enriquecer(conn, evento, sesion, cfg)
-    efectos = decidir(evento, sesion, cfg)
+    efectos = _sin_escrituras_inutiles(sesion, decidir(evento, sesion, cfg), cfg)
 
     try:
         repositorio.aplicar(conn, efectos, evento)
@@ -58,6 +58,16 @@ def _enriquecer(conn, evento: m.Evento, sesion: m.Sesion | None, cfg: m.Config) 
     El motor es puro: no consulta nada. Cuando una decisión depende del estado
     del mundo (¿ya alarmé por esto?), el dato entra por `datos`.
     """
+    if evento.tipo == "acceso" and sesion is None:
+        if evento.datos.get("resultado") == "CONCEDIDO":
+            evento.datos["sesion_reanudable"] = repositorio.sesion_reanudable(
+                conn,
+                evento.ubicacion_id,
+                evento.datos.get("uid_hex"),
+                evento.ts,
+                cfg.t_reanudacion_s,
+            )
+
     if evento.tipo == "pir" and sesion is None:
         evento.datos["ya_alarmado"] = repositorio.alarma_existe_desde(
             conn,
@@ -65,6 +75,28 @@ def _enriquecer(conn, evento: m.Evento, sesion: m.Sesion | None, cfg: m.Config) 
             "PRESENCIA_SIN_SESION",
             evento.ts - timedelta(seconds=cfg.t_recordatorio_alarma_s),
         )
+
+
+def _sin_escrituras_inutiles(sesion: m.Sesion | None, efectos: list, cfg: m.Config) -> list:
+    """Descarta el UPDATE de actividad cuando no cambia ninguna decisión.
+
+    El PIR reporta cada 30 s: con una sesión abierta toda la tarde, eso es un
+    UPDATE por muestra sobre la misma fila, cientos por día y por ubicación,
+    cada uno con su WAL. Y no sirve de nada: la ausencia se mide en 15 minutos,
+    así que una marca con hasta `t_precision_actividad_s` de atraso decide
+    exactamente lo mismo. Se conserva el evento —esa es la evidencia—, se
+    ahorra el UPDATE.
+    """
+    if sesion is None:
+        return efectos
+    conservados = []
+    for efecto in efectos:
+        if isinstance(efecto, m.MarcarActividad):
+            atraso = (efecto.ts - sesion.ultima_actividad).total_seconds()
+            if 0 <= atraso < cfg.t_precision_actividad_s:
+                continue
+        conservados.append(efecto)
+    return conservados
 
 
 def _sesion_para(conn, evento: m.Evento) -> m.Sesion | None:
@@ -149,7 +181,14 @@ def tareas_periodicas(conn, cfg: m.Config | None = None, ts=None) -> list:
 
 
 def _corte_de_jornada(ts, cfg: m.Config):
-    """Instante de cierre administrativo del día de `ts`, en hora local."""
+    """Instante del cierre por reloj de HOY, o None si está deshabilitado.
+
+    Deshabilitado es el default: el colegio dice 6 a 00 pero hay actos y
+    jornadas especiales, así que la hora no es un dato confiable. El cierre
+    normal lo hace la quiescencia (ver `tarea_ausencia` en el motor).
+    """
+    if cfg.hora_fin_jornada is None:
+        return None
     return ts.replace(hour=cfg.hora_fin_jornada, minute=0, second=0, microsecond=0)
 
 
@@ -176,7 +215,7 @@ def _tarea_por_ubicacion(conn, cfg: m.Config, ts) -> list:
         # empezó a las 22:30 es de la jornada siguiente, y tiene que seguir
         # sujeta a la ausencia como cualquier otra en vez de quedar sin
         # vigilancia hasta la medianoche.
-        if ts >= corte and sesion.inicio < corte:
+        if corte is not None and ts >= corte and sesion.inicio < corte:
             evento = m.Evento(
                 tipo="tarea_fin_jornada", ubicacion_id=ubic, ts=ts,
                 datos={"corte": corte},

@@ -38,7 +38,28 @@ class Config:
 
     t_ausencia_s: int = 15 * 60
     t_puerta_abierta_s: int = 5 * 60   # Puerta abierta prolongada, con o sin gente
-    hora_fin_jornada: int = 22
+
+    # Cierre de jornada POR QUIESCENCIA, no por reloj. El colegio dice 6 a 00,
+    # pero hay actos, reuniones y jornadas especiales: un corte a hora fija
+    # cierra sesiones de gente que sigue adentro, o deja abiertas las de un día
+    # atípico. Silencio total prolongado es una señal más confiable que la hora,
+    # y cierra incluso con la puerta abierta (donde la ausencia no cierra).
+    t_jornada_quiescente_s: int = 90 * 60
+
+    # Volver a pasar la MISMA tarjeta después de un cierre por ausencia reanuda
+    # la sesión en vez de abrir una nueva: el profe que fue al recreo sigue
+    # siendo el mismo responsable, y la auditoría no debe partir su turno en
+    # pedazos. Fuera de esta ventana ya es un turno nuevo.
+    t_reanudacion_s: int = 90 * 60
+
+    # Precisión con la que se guarda la marca de actividad. Por debajo de esto
+    # el UPDATE no cambia ninguna decisión (la ausencia se mide en minutos) y
+    # solo genera escrituras: el PIR reporta cada 30 s durante horas.
+    t_precision_actividad_s: int = 60
+
+    # Cierre por reloj: red de seguridad OPCIONAL, apagada por defecto. Poner
+    # una hora (0-23) solo si se quiere además del cierre por quiescencia.
+    hora_fin_jornada: int | None = None
     # Un nodo late cada 60 s: cinco minutos de silencio ya no es una WiFi
     # temperamental, es un nodo caído.
     t_sin_heartbeat_s: int = 5 * 60
@@ -96,6 +117,19 @@ class Evento:
 class CrearSesion:
     ubicacion_id: str
     uid_hex: str
+    ts: datetime
+
+
+@dataclass
+class ReanudarSesion:
+    """Reabre una sesión cerrada por ausencia: es el MISMO turno, no uno nuevo.
+
+    Se cuenta la reanudación en la sesión para que el hueco quede a la vista:
+    la auditoría tiene que poder decir "estuvo, se fue 20 minutos y volvió",
+    no fabricar una continuidad que no existió.
+    """
+
+    sesion_id: int
     ts: datetime
 
 

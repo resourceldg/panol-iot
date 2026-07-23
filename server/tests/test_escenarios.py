@@ -24,6 +24,7 @@ import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import retencion
 import servicio
 from db import repositorio
 from engine import modelo as m
@@ -702,6 +703,147 @@ class TestIdempotenciaConcurrente(BaseEscenario):
             self.assertEqual(len(self.sesiones()), 1)
         finally:
             otra.close()
+
+
+class TestReanudacionDelMismoLlavero(BaseEscenario):
+    """El profe que va al recreo y vuelve es el MISMO turno.
+
+    Sin esto, una tarde de ir y venir quedaba partida en cinco sesiones y la
+    auditoría no podía responder "¿cuánto tiempo estuvo a cargo?".
+    """
+
+    def test_volver_dentro_de_la_ventana_reanuda(self):
+        self.ingresa(ANA, en(0))
+        self.tarea_ausencia(en(20))              # cierra por ausencia
+        self.assertIsNone(self.activa())
+
+        self.ingresa(ANA, en(40))                # vuelve del recreo
+
+        self.assertEqual(len(self.sesiones()), 1, "partió el turno en dos")
+        sesion = self.sesiones()[0]
+        self.assertEqual(sesion["estado"], m.EN_CURSO)
+        self.assertEqual(sesion["hora_inicio"], en(0), "le movió el inicio")
+        self.assertIsNone(sesion["hora_fin"])
+        self.assertEqual(sesion["reanudaciones"], 1, "el hueco no quedó a la vista")
+
+    def test_otro_llavero_abre_una_sesion_nueva(self):
+        self.ingresa(ANA, en(0))
+        self.tarea_ausencia(en(20))
+        self.ingresa(BETO, en(25))
+
+        self.assertEqual(len(self.sesiones()), 2)
+        self.assertEqual(self.activa().uid_hex, BETO)
+
+    def test_fuera_de_la_ventana_es_un_turno_nuevo(self):
+        self.ingresa(ANA, en(0))
+        self.tarea_ausencia(en(20))
+        self.ingresa(ANA, en(20 + self.cfg.t_reanudacion_s / 60 + 1))
+
+        self.assertEqual(len(self.sesiones()), 2, "reanudó un turno de ayer")
+
+    def test_no_reanuda_sobre_un_relevo(self):
+        """Si otro se hizo cargo en el medio, el turno anterior terminó."""
+        self.ingresa(ANA, en(0))
+        self.ingresa(BETO, en(10))               # RELEVO: cierra el de Ana
+        self.tarea_ausencia(en(30))              # ausencia: cierra el de Beto
+        self.ingresa(ANA, en(35))
+
+        self.assertEqual(len(self.sesiones()), 3)
+        self.assertEqual(self.sesiones()[0]["motivo_cierre"], m.RELEVO)
+
+    def test_la_actividad_posterior_va_a_la_sesion_reanudada(self):
+        self.ingresa(ANA, en(0))
+        self.tarea_ausencia(en(20))
+        self.ingresa(ANA, en(40))
+        self.armario(3, en(45))
+
+        armarios = self.conn.execute(
+            "SELECT sesion_id FROM eventos_armario"
+        ).fetchall()
+        self.assertEqual(armarios[0]["sesion_id"], self.sesiones()[0]["id"])
+        self.assertEqual(self.codigos_alarma(), [], "lo tomó como anomalía")
+
+
+class TestCierrePorQuiescencia(BaseEscenario):
+    """El colegio dice 6 a 00, pero hay actos y jornadas especiales: el reloj
+    no es un dato confiable. El silencio prolongado sí."""
+
+    def test_silencio_prolongado_cierra_aunque_la_puerta_este_abierta(self):
+        self.ingresa(ANA, en(0))
+        quieto = self.cfg.t_jornada_quiescente_s / 60 + 1
+        self._ingerir("tarea_ausencia", en(quieto), reed_actual="ABIERTO")
+
+        self.assertIsNone(self.activa(), "se fueron y la sesión quedó viva")
+        self.assertEqual(self.sesiones()[0]["motivo_cierre"], m.CIERRE_SISTEMA)
+
+    def test_antes_de_la_quiescencia_la_puerta_abierta_no_cierra(self):
+        """La ausencia sigue sin cerrar con la puerta abierta: solo alarma."""
+        self.ingresa(ANA, en(0))
+        self._ingerir("tarea_ausencia", en(20), reed_actual="ABIERTO")
+
+        self.assertIsNotNone(self.activa())
+        self.assertEqual(self.codigos_alarma(), ["PUERTA_ABIERTA_SIN_GENTE"])
+
+    def test_con_actividad_no_cierra_nunca(self):
+        self.ingresa(ANA, en(0))
+        for minuto in range(10, 200, 10):        # alguien trabajando de noche
+            self.pir(en(minuto))
+            self._ingerir("tarea_ausencia", en(minuto + 1), reed_actual="CERRADO")
+
+        self.assertIsNotNone(self.activa(), "cerró a alguien que estaba adentro")
+
+
+class TestEscrituras(BaseEscenario):
+    """Minimalismo en disco: se conserva la evidencia, se evita el UPDATE que
+    no cambia ninguna decisión."""
+
+    def test_el_pir_frecuente_no_escribe_una_marca_por_muestra(self):
+        self.ingresa(ANA, en(0))
+        antes = self.activa().ultima_actividad
+
+        # Seis muestras en dos minutos, como el PIR real (una cada 30 s).
+        for segundos in (30, 60, 90, 120):
+            efectos = self.pir(en(0) + timedelta(seconds=segundos))
+            self.assertNotIn(
+                "MarcarActividad",
+                [type(e).__name__ for e in efectos if segundos < 60],
+                "escribió una marca que no cambiaba nada",
+            )
+
+        # Pero la actividad SÍ avanzó: no se perdió la señal, se agrupó.
+        self.assertGreater(self.activa().ultima_actividad, antes)
+
+
+class TestRetencion(BaseEscenario):
+    def test_purga_lo_vencido_y_conserva_lo_reciente(self):
+        repositorio.asegurar_ubicacion(self.conn, LAB01)
+        self.conn.execute(
+            "INSERT INTO eventos_pir (ubicacion_id, timestamp)"
+            " VALUES (%s, now() - interval '200 days'), (%s, now())",
+            (LAB01, LAB01),
+        )
+        politica = retencion.Politica(eventos_pir=90)
+
+        borradas = retencion.purgar(self.conn, politica)
+
+        self.assertEqual(borradas.get("eventos_pir"), 1)
+        self.assertEqual(len(self.eventos_pir()), 1)
+
+    def test_las_alarmas_no_se_purgan(self):
+        """Son tickets de EMATP: el sistema no borra su propio historial."""
+        repositorio.asegurar_ubicacion(self.conn, LAB01)
+        self.conn.execute(
+            "INSERT INTO alarmas (ubicacion_id, codigo, severidad, timestamp)"
+            " VALUES (%s, 'PRESENCIA_SIN_SESION', 'critica',"
+            "         now() - interval '900 days')",
+            (LAB01,),
+        )
+        retencion.purgar(self.conn, retencion.Politica())
+        self.assertEqual(len(self.alarmas()), 1)
+
+    def test_los_recibos_de_idempotencia_viven_mas_que_una_cola_offline(self):
+        """Borrar un recibo que el nodo todavía puede reenviar = duplicar."""
+        self.assertGreaterEqual(retencion.Politica().eventos_procesados, 30)
 
 
 if __name__ == "__main__":

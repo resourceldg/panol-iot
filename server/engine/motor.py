@@ -29,6 +29,7 @@ from .modelo import (
     MarcarActividad,
     MarcarAlarmadaPuertaAbierta,
     MarcarInconsistente,
+    ReanudarSesion,
     RegistrarAcceso,
     RegistrarArmario,
     RegistrarPir,
@@ -94,6 +95,19 @@ def _acceso(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
     # ambigüedad salida/re-ingreso, que en v1 no se puede desambiguar.
     if sesion is not None:
         efectos.append(FinalizarSesion(sesion.id, RELEVO, evento.ts))
+        efectos.append(CrearSesion(evento.ubicacion_id, uid, evento.ts))
+        return efectos
+
+    # Sin sesión abierta: puede ser alguien que llega… o el mismo que volvió
+    # del recreo después de que la ausencia le cerrara el turno. Quien llama
+    # provee la sesión reanudable (misma tarjeta, cerrada por ausencia dentro
+    # de cfg.t_reanudacion_s). Reanudar en vez de crear evita que un turno de
+    # cuatro horas quede partido en seis sesiones por ir y venir.
+    reanudable = evento.datos.get("sesion_reanudable")
+    if reanudable is not None:
+        efectos.append(ReanudarSesion(reanudable, evento.ts))
+        return efectos
+
     efectos.append(CrearSesion(evento.ubicacion_id, uid, evento.ts))
     return efectos
 
@@ -186,6 +200,15 @@ def _tarea_ausencia(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
     if sesion is None:
         return []
     inactivo_s = (evento.ts - sesion.ultima_actividad).total_seconds()
+
+    # Fin de jornada por QUIESCENCIA: silencio total y prolongado. Cierra aunque
+    # la puerta esté abierta, y ese es justamente el caso que antes quedaba
+    # colgado para siempre — alguien se fue sin cerrar y la ausencia, por
+    # diseño, no cierra con la puerta abierta. La alarma de puerta abierta
+    # sigue su curso; lo que se termina acá es la responsabilidad.
+    if inactivo_s >= cfg.t_jornada_quiescente_s:
+        return [FinalizarSesion(sesion.id, CIERRE_SISTEMA, evento.ts)]
+
     if inactivo_s < cfg.t_ausencia_s:
         return []
 
@@ -295,6 +318,9 @@ def _tarea_recuperacion(evento: Evento, sesion: Sesion | None, cfg: Config) -> l
     if sesion is None:
         return []
     inactivo_s = (evento.ts - sesion.ultima_actividad).total_seconds()
+    # OJO: acá NO va el cierre por quiescencia. Tras un corte no se sabe si el
+    # silencio fue del pañol o del servidor apagado, así que cerrar sería
+    # inventar una hora de salida. Marcar INCONSISTENTE es lo honesto.
     if inactivo_s < cfg.t_ausencia_s:
         return []
     return [
