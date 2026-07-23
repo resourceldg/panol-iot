@@ -56,8 +56,25 @@ def conectar(dsn: str | None = None) -> psycopg.Connection:
     return conn
 
 
+# Clave arbitraria y estable del lock de aviso ("panol" en ASCII). Cualquier
+# proceso que vaya a crear el esquema pide ESTA misma.
+_LOCK_ESQUEMA = 0x70616E6F6C
+
+
 def inicializar(conn: psycopg.Connection) -> None:
-    conn.execute(RUTA_ESQUEMA.read_text(encoding="utf-8"))
+    """Crea el esquema, serializado con un lock de aviso.
+
+    `CREATE TABLE IF NOT EXISTS` NO es seguro entre procesos concurrentes: la
+    api y el puente arrancan juntos, los dos ven que la tabla no existe y los
+    dos la crean; el que pierde revienta con UniqueViolation sobre `pg_type`.
+    Con el lock, el segundo espera al primero y encuentra todo hecho.
+
+    El lock es de transacción, así que se suelta solo al terminar — incluso si
+    el esquema falla a la mitad.
+    """
+    with conn.transaction():
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (_LOCK_ESQUEMA,))
+        conn.execute(RUTA_ESQUEMA.read_text(encoding="utf-8"))
 
 
 # --- Topología -----------------------------------------------------------
