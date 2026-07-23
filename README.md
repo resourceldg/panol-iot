@@ -117,6 +117,26 @@ python -m unittest discover -s firmware/tests -t .
   Implementada — falta configurar `EMATP_URL` y `EMATP_TOKEN` y correr `migration_v7.sql`
   del lado de EMATP.
 
+## Ajustar los tiempos para probar
+
+Los parámetros de la spec §12 son los valores por defecto del `Config` y se
+pueden bajar por variable de entorno sin tocar código. Esperar quince minutos
+para ver si una alarma se repite no es una prueba, es una siesta.
+
+| Variable | Default | Qué controla |
+|---|---|---|
+| `PANOL_T_RECORDATORIO_S` | 900 | cada cuánto se repite la alarma de una condición que sigue (presencia sin sesión, nodo mudo) |
+| `PANOL_T_AUSENCIA_S` | 900 | inactividad que cierra la sesión |
+| `PANOL_T_QUIESCENCIA_S` | 5400 | silencio que cierra la jornada, incluso con la puerta abierta |
+| `PANOL_T_REANUDACION_S` | 5400 | ventana para que el mismo llavero reanude su turno |
+| `PANOL_T_PUERTA_ABIERTA_S` | 300 | puerta abierta demasiado tiempo |
+| `PANOL_T_SIN_HEARTBEAT_S` | 300 | silencio de un nodo que dispara alarma |
+
+En el homelab van en `/etc/panol/app.env`; en el stack local, en el `.env`.
+**Volvé a los valores de producción antes de montar en el colegio**: con el
+recordatorio en dos minutos, una persona trabajando sin fichar genera una
+alarma —y un ticket— cada dos minutos.
+
 ## Alarmas → tickets de EMATP
 
 El planificador vacía una **bandeja de salida**: la alarma se escribe primero en la base

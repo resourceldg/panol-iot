@@ -5,9 +5,20 @@ del motor. Esa frontera es lo que permite probar la máquina de estados con
 un simulador, sin levantar servidor ni base.
 """
 
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
+
+
+def _param(nombre: str, defecto: int) -> int:
+    """Parámetro de la spec, ajustable por entorno.
+
+    Los valores por defecto son los de producción. Poder bajarlos por variable
+    de entorno es lo que hace probable un banco de pruebas: esperar quince
+    minutos para ver si una alarma se repite no es una prueba, es una siesta.
+    """
+    return int(os.environ.get(nombre, defecto))
 
 # --- Motivos de cierre de sesión (spec v1.0 §3) --------------------------
 RELEVO = "RELEVO"
@@ -36,38 +47,41 @@ SEVERIDADES = {
 class Config:
     """Parámetros de la spec §12. Se pasan al motor, no se leen de globals."""
 
-    t_ausencia_s: int = 15 * 60
-    t_puerta_abierta_s: int = 5 * 60   # Puerta abierta prolongada, con o sin gente
+    t_ausencia_s: int = field(default_factory=lambda: _param("PANOL_T_AUSENCIA_S", 15 * 60))
+    t_puerta_abierta_s: int = field(default_factory=lambda: _param("PANOL_T_PUERTA_ABIERTA_S", 5 * 60))
 
     # Cierre de jornada POR QUIESCENCIA, no por reloj. El colegio dice 6 a 00,
     # pero hay actos, reuniones y jornadas especiales: un corte a hora fija
     # cierra sesiones de gente que sigue adentro, o deja abiertas las de un día
     # atípico. Silencio total prolongado es una señal más confiable que la hora,
     # y cierra incluso con la puerta abierta (donde la ausencia no cierra).
-    t_jornada_quiescente_s: int = 90 * 60
+    t_jornada_quiescente_s: int = field(
+        default_factory=lambda: _param("PANOL_T_QUIESCENCIA_S", 90 * 60))
 
     # Volver a pasar la MISMA tarjeta después de un cierre por ausencia reanuda
     # la sesión en vez de abrir una nueva: el profe que fue al recreo sigue
     # siendo el mismo responsable, y la auditoría no debe partir su turno en
     # pedazos. Fuera de esta ventana ya es un turno nuevo.
-    t_reanudacion_s: int = 90 * 60
+    t_reanudacion_s: int = field(default_factory=lambda: _param("PANOL_T_REANUDACION_S", 90 * 60))
 
     # Precisión con la que se guarda la marca de actividad. Por debajo de esto
     # el UPDATE no cambia ninguna decisión (la ausencia se mide en minutos) y
     # solo genera escrituras: el PIR reporta cada 30 s durante horas.
-    t_precision_actividad_s: int = 60
+    t_precision_actividad_s: int = field(
+        default_factory=lambda: _param("PANOL_T_PRECISION_ACTIVIDAD_S", 60))
 
     # Cierre por reloj: red de seguridad OPCIONAL, apagada por defecto. Poner
     # una hora (0-23) solo si se quiere además del cierre por quiescencia.
     hora_fin_jornada: int | None = None
     # Un nodo late cada 60 s: cinco minutos de silencio ya no es una WiFi
     # temperamental, es un nodo caído.
-    t_sin_heartbeat_s: int = 5 * 60
+    t_sin_heartbeat_s: int = field(default_factory=lambda: _param("PANOL_T_SIN_HEARTBEAT_S", 5 * 60))
     # Cada cuánto se REPITE la alarma de una condición que sigue pasando
     # (presencia sin sesión, nodo mudo). Ni una por muestra —una persona
     # trabajando serían decenas— ni una sola para siempre, que haría creer que
     # el episodio terminó.
-    t_recordatorio_alarma_s: int = 15 * 60
+    t_recordatorio_alarma_s: int = field(
+        default_factory=lambda: _param("PANOL_T_RECORDATORIO_S", 15 * 60))
 
 
 @dataclass
