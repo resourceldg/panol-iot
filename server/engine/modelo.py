@@ -39,6 +39,14 @@ class Config:
     t_ausencia_s: int = 15 * 60
     t_puerta_abierta_s: int = 5 * 60   # Puerta abierta prolongada, con o sin gente
     hora_fin_jornada: int = 22
+    # Un nodo late cada 60 s: cinco minutos de silencio ya no es una WiFi
+    # temperamental, es un nodo caído.
+    t_sin_heartbeat_s: int = 5 * 60
+    # Cada cuánto se REPITE la alarma de una condición que sigue pasando
+    # (presencia sin sesión, nodo mudo). Ni una por muestra —una persona
+    # trabajando serían decenas— ni una sola para siempre, que haría creer que
+    # el episodio terminó.
+    t_recordatorio_alarma_s: int = 15 * 60
 
 
 @dataclass

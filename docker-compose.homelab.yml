@@ -1,7 +1,7 @@
 # Despliegue del CEREBRO en el homelab (etapa 2).
 #
 # El homelab ya provee broker, base y tablero (repo `homelab`, stack `panol`).
-# Este compose agrega lo único que falta —la API y el puente— y los engancha a
+# Este compose agrega lo que falta —la API, el puente y el planificador— y los engancha a
 # la red `panol`, que ya existe. Por eso acá no hay postgres ni mosquitto: la
 # base es una sola, y duplicarla partiría la auditoría en dos.
 #
@@ -53,6 +53,22 @@ services:
           cpus: "0.50"
           memory: 256M
     command: ["python", "puente_mqtt.py"]
+
+  planificador:
+    build: ./server
+    container_name: panol-planificador
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    env_file: /etc/panol/app.env
+    networks: [panol]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 192M
+    # El latido del servidor. No depende de la api: si la cáscara HTTP se cae,
+    # las sesiones tienen que seguir cerrándose igual.
+    command: ["python", "planificador.py"]
 
 networks:
   # La crea el stack del homelab (compose/panol/compose.yml). Acá se usa tal

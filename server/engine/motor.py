@@ -126,16 +126,27 @@ def _pir(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
     Consecuencia: `eventos_pir` solo acumula movimientos indebidos.
 
     Ya viene throttleado por el nodo (1 cada 30 s).
+
+    La presencia es una condición SOSTENIDA muestreada cada 30 s, no un hecho
+    puntual: una persona trabajando media hora sin sesión son ~60 muestras. El
+    registro se guarda entero —es la evidencia— pero la alarma se agrupa por
+    episodio, igual que PUERTA_ABIERTA_*. Sin esto, media hora de presencia
+    indebida son 60 alarmas y, con EMATP conectado, 60 tickets por una persona.
+
+    `ya_alarmado` lo provee quien llama (es un dato de la base): "ya hubo
+    alarma de este código en los últimos cfg.t_recordatorio_alarma_s". Así el
+    episodio se rearma solo, y si la presencia continúa vuelve a alarmar cada
+    ese intervalo — no se pierde la señal de "esto sigue pasando".
     """
     if sesion is not None:
         return _actividad(sesion, evento.ts)
     # Puede ser intrusión, o el "falso cierre" de spec §9: alguien quieto a
     # quien el PIR no vio, cuya sesión se cerró por AUSENCIA. La distinción
     # la hace la auditoría mirando si viene justo después de un cierre.
-    return [
-        RegistrarPir(evento.ubicacion_id, None, evento.ts),
-        Alarma(evento.ubicacion_id, "PRESENCIA_SIN_SESION", evento.ts),
-    ]
+    efectos = [RegistrarPir(evento.ubicacion_id, None, evento.ts)]
+    if not evento.datos.get("ya_alarmado"):
+        efectos.append(Alarma(evento.ubicacion_id, "PRESENCIA_SIN_SESION", evento.ts))
+    return efectos
 
 
 def _armario(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
@@ -178,7 +189,12 @@ def _tarea_ausencia(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
     if inactivo_s < cfg.t_ausencia_s:
         return []
 
-    if evento.datos.get("reed_actual") == "CERRADO":
+    # Se cierra salvo que el reed diga EXPLÍCITAMENTE que la puerta está
+    # abierta. Antes se exigía un "CERRADO" explícito, y entonces una ubicación
+    # sin dato de reed (nunca reportó, o el sensor no está cableado) no cerraba
+    # nunca: quedaba un responsable eterno en el registro. Lo que falta en ese
+    # caso es información sobre la PUERTA, no sobre la ausencia de la persona.
+    if evento.datos.get("reed_actual") != "ABIERTO":
         return [FinalizarSesion(sesion.id, AUSENCIA, evento.ts)]
 
     # Puerta abierta sin gente: se fueron sin cerrar. La sesión NO se cierra
@@ -227,10 +243,45 @@ def _tarea_puerta_abierta(evento: Evento, sesion: Sesion | None, cfg: Config) ->
 
 
 def _tarea_fin_jornada(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
-    """Cierre administrativo. Nadie queda como responsable de un día para otro."""
+    """Cierre administrativo. Nadie queda como responsable de un día para otro.
+
+    `corte` es el instante de cierre de HOY (lo calcula quien llama, que es
+    quien sabe la zona horaria). Solo se cierran las sesiones que empezaron
+    ANTES del corte: si alguien fichó a las 22:30, esa sesión es de la jornada
+    siguiente y cerrarla en el próximo minuto sería absurdo.
+    """
     if sesion is None:
         return []
+    corte = evento.datos.get("corte")
+    if corte is not None and sesion.inicio >= corte:
+        return []
     return [FinalizarSesion(sesion.id, CIERRE_SISTEMA, evento.ts)]
+
+
+def _tarea_nodo_mudo(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
+    """Un nodo que dejó de latir. Ceguera silenciosa (spec §6).
+
+    Es lo más parecido a un fallo invisible que tiene el sistema: sin
+    heartbeats el servidor no recibe nada y, si nadie mira, "no pasa nada" se
+    confunde con "no me estoy enterando de nada". Por eso alarma.
+
+    Una sola alarma por episodio (`ya_alarmado`), que se rearma cuando el nodo
+    vuelve: un nodo muerto un fin de semana no debe generar una alarma por
+    minuto.
+    """
+    if evento.datos.get("ya_alarmado"):
+        return []
+    return [
+        Alarma(
+            evento.ubicacion_id,
+            "NODO_SIN_HEARTBEAT",
+            evento.ts,
+            detalle={
+                "nodo_id": evento.datos.get("nodo_id"),
+                "ultimo_heartbeat": evento.datos.get("ultimo_heartbeat"),
+            },
+        )
+    ]
 
 
 def _tarea_recuperacion(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
@@ -266,5 +317,6 @@ _MANEJADORES = {
     "tarea_ausencia": _tarea_ausencia,
     "tarea_puerta_abierta": _tarea_puerta_abierta,
     "tarea_fin_jornada": _tarea_fin_jornada,
+    "tarea_nodo_mudo": _tarea_nodo_mudo,
     "tarea_recuperacion": _tarea_recuperacion,
 }

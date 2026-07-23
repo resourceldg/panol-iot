@@ -533,5 +533,176 @@ class TestContratoDelMotor(BaseEscenario):
             self._ingerir("tipo_inventado", en(0))
 
 
+class TestPresenciaSinSesionPorEpisodios(BaseEscenario):
+    """La presencia sin sesión es una condición SOSTENIDA, no un hecho puntual.
+
+    El nodo la muestrea cada 30 s: media hora de alguien trabajando sin fichar
+    eran ~60 alarmas (y, con EMATP conectado, 60 tickets). El registro tiene que
+    quedar entero —es la evidencia— pero la alarma se agrupa por episodio.
+    """
+
+    def test_registra_todo_pero_alarma_una_vez(self):
+        for minuto in (0, 0.5, 1, 2, 5):
+            self.pir(en(minuto))
+
+        self.assertEqual(len(self.eventos_pir()), 5, "se perdió evidencia")
+        self.assertEqual(self.codigos_alarma(), ["PRESENCIA_SIN_SESION"])
+
+    def test_si_sigue_pasando_vuelve_a_alarmar(self):
+        """Una sola alarma para siempre haría creer que el episodio terminó."""
+        self.pir(en(0))
+        self.pir(en(self.cfg.t_recordatorio_alarma_s / 60 + 1))
+
+        self.assertEqual(
+            self.codigos_alarma(),
+            ["PRESENCIA_SIN_SESION", "PRESENCIA_SIN_SESION"],
+        )
+
+    def test_con_sesion_no_alarma_nunca(self):
+        self.ingresa(ANA, en(0))
+        for minuto in (1, 2, 3):
+            self.pir(en(minuto))
+        self.assertEqual(self.codigos_alarma(), [])
+
+
+class TestAusenciaSinDatoDeReed(BaseEscenario):
+    """Una ubicación sin reed cableado no puede quedar con responsable eterno."""
+
+    def test_sin_dato_de_reed_la_sesion_igual_se_cierra(self):
+        self.ingresa(ANA, en(0))
+        self._ingerir("tarea_ausencia", en(20), reed_actual=None)
+
+        self.assertIsNone(self.activa(), "quedó un responsable eterno")
+        self.assertEqual(self.sesiones()[0]["motivo_cierre"], m.AUSENCIA)
+
+    def test_con_la_puerta_abierta_no_se_cierra_y_alarma(self):
+        self.ingresa(ANA, en(0))
+        self._ingerir("tarea_ausencia", en(20), reed_actual="ABIERTO")
+
+        self.assertIsNotNone(self.activa(), "el responsable sigue siéndolo")
+        self.assertEqual(self.codigos_alarma(), ["PUERTA_ABIERTA_SIN_GENTE"])
+
+
+class TestFinDeJornada(BaseEscenario):
+    def test_no_cierra_una_sesion_abierta_despues_del_corte(self):
+        """Quien fichó a las 22:30 pertenece a la jornada siguiente."""
+        corte = en(0).replace(hour=22, minute=0)
+        self.ingresa(ANA, corte + timedelta(minutes=30))
+        self._ingerir(
+            "tarea_fin_jornada", corte + timedelta(minutes=31), corte=corte
+        )
+
+        self.assertIsNotNone(self.activa(), "cerró una sesión de la jornada nueva")
+
+    def test_cierra_la_que_venia_de_antes_del_corte(self):
+        corte = en(0).replace(hour=22, minute=0)
+        self.ingresa(ANA, corte - timedelta(hours=2))
+        self._ingerir("tarea_fin_jornada", corte, corte=corte)
+
+        self.assertIsNone(self.activa())
+        self.assertEqual(self.sesiones()[0]["motivo_cierre"], m.CIERRE_SISTEMA)
+
+
+class TestNodoMudo(BaseEscenario):
+    """Un nodo que dejó de latir es ceguera silenciosa: 'no pasa nada' y 'no me
+    estoy enterando de nada' se ven igual desde afuera."""
+
+    def _nodo(self, nodo_id, hace_minutos, rol="puerta"):
+        repositorio.asegurar_ubicacion(self.conn, LAB01)
+        self.conn.execute(
+            "INSERT INTO nodos (id, ubicacion_id, rol, ultimo_heartbeat)"
+            " VALUES (%s, %s, %s, now() - make_interval(mins => %s))"
+            " ON CONFLICT (id) DO UPDATE SET"
+            " ultimo_heartbeat = EXCLUDED.ultimo_heartbeat",
+            (nodo_id, LAB01, rol, hace_minutos),
+        )
+
+    def test_alarma_una_vez_por_episodio(self):
+        self._nodo("n1", 30)
+        servicio.tareas_periodicas(self.conn, self.cfg)
+        servicio.tareas_periodicas(self.conn, self.cfg)
+
+        self.assertEqual(self.codigos_alarma(), ["NODO_SIN_HEARTBEAT"])
+
+    def test_un_nodo_mudo_no_tapa_al_otro(self):
+        self._nodo("n1", 30)
+        self._nodo("n2", 30, rol="armarios")
+        servicio.tareas_periodicas(self.conn, self.cfg)
+
+        alarmadas = {a["detalle"]["nodo_id"] for a in self.alarmas()}
+        self.assertEqual(alarmadas, {"n1", "n2"})
+
+    def test_nodo_al_dia_no_alarma(self):
+        self._nodo("n1", 0)
+        servicio.tareas_periodicas(self.conn, self.cfg)
+        self.assertEqual(self.codigos_alarma(), [])
+
+
+class TestPlanificador(BaseEscenario):
+    """Las tareas periódicas existían y estaban probadas… pero NADIE las
+    llamaba. En producción ninguna sesión se cerraba sola."""
+
+    def test_la_vuelta_periodica_cierra_por_ausencia(self):
+        ahora = repositorio.ahora().replace(hour=10, minute=0)
+        self.ingresa(ANA, ahora - timedelta(minutes=40))
+        self.puerta("CERRADO", ahora - timedelta(minutes=39))
+        self.assertIsNotNone(self.activa())
+
+        servicio.tareas_periodicas(self.conn, self.cfg, ts=ahora)
+
+        self.assertIsNone(self.activa(), "la sesión quedó abierta para siempre")
+        self.assertEqual(self.sesiones()[0]["motivo_cierre"], m.AUSENCIA)
+
+    def test_una_sesion_con_actividad_reciente_sigue_abierta(self):
+        ahora = repositorio.ahora().replace(hour=10, minute=0)
+        self.ingresa(ANA, ahora - timedelta(minutes=2))
+        servicio.tareas_periodicas(self.conn, self.cfg, ts=ahora)
+        self.assertIsNotNone(self.activa())
+
+    def test_una_sesion_abierta_despues_del_corte_sigue_sujeta_a_la_ausencia(self):
+        """El fin de jornada no puede dejarla sin vigilancia hasta medianoche."""
+        corte = repositorio.ahora().replace(hour=22, minute=0, second=0, microsecond=0)
+        self.ingresa(ANA, corte + timedelta(minutes=10))
+        self.puerta("CERRADO", corte + timedelta(minutes=11))
+
+        servicio.tareas_periodicas(self.conn, self.cfg, ts=corte + timedelta(minutes=40))
+
+        self.assertIsNone(self.activa())
+        self.assertEqual(self.sesiones()[0]["motivo_cierre"], m.AUSENCIA)
+
+
+class TestIdempotenciaConcurrente(BaseEscenario):
+    """Los DOS procesos que ingieren (api por HTTP, puente por MQTT) pueden
+    recibir el mismo evento a la vez."""
+
+    def test_dos_ingestas_simultaneas_del_mismo_evento(self):
+        otra = repositorio.conectar(os.environ.get("PANOL_DSN"))
+        try:
+            evento = m.Evento(
+                tipo="acceso", ubicacion_id=LAB01, ts=en(0), event_id="e-1",
+                datos={"uid_hex": ANA, "resultado": "CONCEDIDO"},
+            )
+            gemelo = m.Evento(
+                tipo="acceso", ubicacion_id=LAB01, ts=en(0), event_id="e-1",
+                datos={"uid_hex": ANA, "resultado": "CONCEDIDO"},
+            )
+            # Las dos pasan el chequeo de "ya procesado" antes de que la otra
+            # escriba: es exactamente la carrera del despliegue real.
+            self.assertFalse(repositorio.ya_procesado(self.conn, "e-1"))
+            self.assertFalse(repositorio.ya_procesado(otra, "e-1"))
+
+            servicio.ingerir(self.conn, evento, self.cfg)
+            efectos = servicio.ingerir(otra, gemelo, self.cfg)
+
+            self.assertEqual(efectos, [], "la segunda ingesta no fue descartada")
+            accesos = self.conn.execute(
+                "SELECT count(*) AS n FROM eventos_acceso"
+            ).fetchone()["n"]
+            self.assertEqual(accesos, 1, "el evento quedó registrado dos veces")
+            self.assertEqual(len(self.sesiones()), 1)
+        finally:
+            otra.close()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

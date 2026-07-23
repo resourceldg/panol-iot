@@ -147,14 +147,24 @@ def estado_puerta_actual(
 
 
 def alarma_existe_desde(
-    conn: psycopg.Connection, ubicacion_id: str, codigo: str, desde: datetime
+    conn: psycopg.Connection,
+    ubicacion_id: str,
+    codigo: str,
+    desde: datetime,
+    nodo_id: str | None = None,
 ) -> bool:
     """¿Ya hay una alarma de este código desde `desde`? Implementa el one-shot
-    de estados sostenidos sin guardar un flag: se lee de la propia tabla."""
+    de estados sostenidos sin guardar un flag: se lee de la propia tabla.
+
+    `nodo_id` acota la pregunta a un nodo (mirando el detalle). Sin eso, dos
+    nodos mudos de la misma ubicación compartirían el one-shot y el segundo
+    quedaría tapado por el primero.
+    """
     fila = conn.execute(
         "SELECT 1 FROM alarmas WHERE ubicacion_id = %s AND codigo = %s"
-        " AND timestamp >= %s LIMIT 1",
-        (ubicacion_id, codigo, desde),
+        " AND timestamp >= %s"
+        " AND (%s::text IS NULL OR detalle->>'nodo_id' = %s) LIMIT 1",
+        (ubicacion_id, codigo, desde, nodo_id, nodo_id),
     ).fetchone()
     return fila is not None
 
@@ -188,9 +198,17 @@ def marcar_procesado(
 ) -> None:
     if not event_id:
         return
+    # SIN `ON CONFLICT DO NOTHING`, y es a propósito. Con él, dos procesos que
+    # ingieren el MISMO evento a la vez (la api por HTTP y el puente por MQTT,
+    # que es el despliegue real) pasaban los dos el chequeo de `ya_procesado`,
+    # los dos aplicaban sus efectos y la marca duplicada se descartaba en
+    # silencio: el evento quedaba registrado dos veces. Dejando que la clave
+    # primaria falle, la transacción entera se deshace y `servicio.ingerir` lo
+    # trata como lo que es, un duplicado. La idempotencia la garantiza la base,
+    # no el orden en que corran los procesos.
     conn.execute(
         "INSERT INTO eventos_procesados (event_id, nodo_id, tipo)"
-        " VALUES (%s, %s, %s) ON CONFLICT (event_id) DO NOTHING",
+        " VALUES (%s, %s, %s)",
         (event_id, nodo_id, tipo),
     )
 
