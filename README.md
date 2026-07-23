@@ -18,7 +18,7 @@ server/            Cerebro
   puente_mqtt.py   Shell MQTT — mismo motor, otro transporte
   planificador.py  Latido: tareas periódicas del motor + purga diaria
   retencion.py     Política de retención (docs/PERSISTENCIA.md)
-  adapters/        emisor_ematp.py (webhook aislado) — etapa posterior
+  adapters/        emisor_ematp.py: bandeja de salida hacia EMATP
   tests/           Simulador de escenarios (docs/DISENO.md §5)
 firmware/
   nodo_panol/      ESP32 #1: FSM local, cola en flash, WiFi
@@ -112,8 +112,26 @@ python -m unittest discover -s firmware/tests -t .
   PIR y reed sobre el ESP32 real. ✔
 - **Etapa 2:** despliegue en el homelab, expuesto LAN + WLAN (admins); nodo de armarios.
   Infra y credenciales listas; falta el tablero Node-RED y rotar las claves `cambiar-*`.
-- **Etapa 3:** integración con EMATP (webhook de salida). Cada alarma es un ticket:
-  por eso se agrupan por episodio y no se purgan nunca (ver [docs/PERSISTENCIA.md](docs/PERSISTENCIA.md)).
+- **Etapa 3:** integración con EMATP. Cada alarma es un ticket: por eso se agrupan por
+  episodio y no se purgan nunca (ver [docs/PERSISTENCIA.md](docs/PERSISTENCIA.md)).
+  Implementada — falta configurar `EMATP_URL` y `EMATP_TOKEN` y correr `migration_v7.sql`
+  del lado de EMATP.
+
+## Alarmas → tickets de EMATP
+
+El planificador vacía una **bandeja de salida**: la alarma se escribe primero en la base
+local y recién después se intenta el ticket. Si EMATP no está, queda pendiente
+(`enviada_ematp = false`) y se reintenta cada minuto — una alarma de seguridad no se
+pierde porque el otro sistema se cayó. La contracara es que EMATP puede recibirla dos
+veces, y por eso la idempotencia la resuelve EMATP con `origen_ref`.
+
+```bash
+EMATP_URL=https://<dominio>/api/integraciones/panol
+EMATP_TOKEN=<el mismo valor que PANOL_API_TOKEN en EMATP>
+```
+
+Sin esas variables la integración no hace nada y el sistema funciona igual, con las
+alarmas acumulándose en su tabla.
 
 ## Mapa de pines — nodo pañol (ESP32 #1, WROOM)
 

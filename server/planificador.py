@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import retencion
 import servicio
+from adapters import emisor_ematp
 from db import repositorio
 from engine import modelo as m
 
@@ -93,7 +94,8 @@ def main():
         "ausencia:", cfg.t_ausencia_s // 60, "min |",
         "quiescencia:", cfg.t_jornada_quiescente_s // 60, "min |",
         "cierre por reloj:", cfg.hora_fin_jornada or "deshabilitado", "|",
-        "purga: {:02d}:00".format(HORA_PURGA))
+        "purga: {:02d}:00".format(HORA_PURGA), "|",
+        "EMATP:", "conectado" if emisor_ematp.habilitado() else "sin configurar")
 
     ultimo_dia_purgado = None
 
@@ -102,6 +104,12 @@ def main():
             conn = _conexion()
             ultimo_dia_purgado = _purga_diaria(conn, ultimo_dia_purgado)
             efectos = _una_vuelta(conn, cfg)
+
+            # La bandeja de salida se vacía DESPUÉS de decidir: primero la
+            # alarma existe en la base local, después se intenta el ticket.
+            resumen = emisor_ematp.despachar(conn)
+            if resumen:
+                log("EMATP:", resumen)
             for efecto in efectos:
                 nombre = type(efecto).__name__
                 if nombre == "Alarma":

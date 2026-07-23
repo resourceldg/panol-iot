@@ -68,6 +68,9 @@ services:
           memory: 192M
     # El latido del servidor. No depende de la api: si la cáscara HTTP se cae,
     # las sesiones tienen que seguir cerrándose igual.
+    #
+    # También despacha las alarmas a EMATP. Las credenciales salen de
+    # /etc/panol/app.env; sin EMATP_URL la integración queda inactiva.
     command: ["python", "planificador.py"]
 
 networks:
