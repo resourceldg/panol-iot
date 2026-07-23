@@ -10,7 +10,7 @@
 # T_REINTENTO_RED_MS antes de reintentar, para no pagar un timeout en cada
 # vuelta del bucle mientras el servidor este caido.
 
-from time import ticks_ms, ticks_diff
+from time import ticks_ms, ticks_diff, ticks_add
 
 import config
 import cola
@@ -26,6 +26,9 @@ _degradado = True          # Hasta probar lo contrario, se asume degradado
 _proximo_intento_ms = 0    # Backoff tras un fallo
 _ultimo_heartbeat_ms = None
 _ultima_whitelist_ms = None
+_asociando_desde_ms = None   # Cuando empezo el intento de asociacion en curso
+_proximo_wifi_ms = 0         # Backoff entre intentos de reasociacion
+_proximo_ntp_ms = None       # Cuando toca (re)sincronizar el reloj
 
 
 def _log(*args):
@@ -69,6 +72,90 @@ def conectada():
     return bool(_wlan and _wlan.isconnected())
 
 
+def _asegurar_wifi(ahora):
+    """Reasocia si se cayo el WiFi. NO bloquea. Devuelve True si hay red.
+
+    `conectar()` corre una sola vez, al bootear. Sin esto, un AP que se
+    reinicia (o un nodo que arranca antes que el router) deja al nodo mudo
+    hasta el proximo reset: reportaria a la cola para siempre y nadie se
+    enteraria salvo por la falta de heartbeats.
+
+    Es no bloqueante a proposito: se lanza el intento y se vuelve al bucle.
+    La asociacion tarda segundos y este codigo corre entre lecturas de
+    sensores; esperar aca seria meter la red en el camino de la puerta, que
+    es justo lo que el diseño prohibe.
+    """
+    global _wlan, _asociando_desde_ms, _proximo_wifi_ms, _ultima_whitelist_ms
+
+    if _wlan is None:
+        # Solo pasa si `conectar()` no llego a correr. Se crea la interfaz en
+        # vez de rendirse: si no, el nodo quedaria mudo sin siquiera intentar.
+        import network
+
+        _wlan = network.WLAN(network.STA_IF)
+
+    if _wlan.isconnected():
+        if _asociando_desde_ms is not None:
+            _log("reasociado, IP", _wlan.ifconfig()[0])
+            _asociando_desde_ms = None
+            # Al volver la red, la whitelist local puede estar vieja: se fuerza
+            # un refresco en la proxima vuelta en vez de esperar los 15 min.
+            _ultima_whitelist_ms = None
+        return True
+
+    # Hay un intento en curso: darle su ventana antes de reintentar.
+    if (_asociando_desde_ms is not None
+            and ticks_diff(ahora, _asociando_desde_ms) < config.T_CONEXION_WIFI_MS):
+        return False
+
+    if ticks_diff(ahora, _proximo_wifi_ms) < 0:
+        return False
+
+    _log("sin WiFi, reasociando a", config.WIFI_SSID)
+    try:
+        _wlan.active(True)
+        # Un disconnect() antes de reintentar saca al driver de un estado de
+        # asociacion a medias, que es donde se queda cuando el AP desaparece.
+        try:
+            _wlan.disconnect()
+        except OSError:
+            pass
+        _wlan.connect(config.WIFI_SSID, config.WIFI_PASS)
+    except OSError as e:
+        _log("no se pudo lanzar la reasociacion:", e)
+
+    _asociando_desde_ms = ahora
+    _proximo_wifi_ms = ticks_add(ahora, config.T_REINTENTO_WIFI_MS)
+    return False
+
+
+def _asegurar_hora(ahora):
+    """Pone el nodo en hora cuando hay red, y lo mantiene en hora.
+
+    Dos casos que el arranque no cubre: bootear sin WiFi (ahi `sincronizar()`
+    ni se intenta, y todos los eventos saldrian sin timestamp para siempre) y
+    la deriva del reloj interno, que no tiene pila ni cristal de precision.
+    En la cola offline el timestamp es lo unico que permite atribuir un evento
+    a la sesion correcta, asi que la hora no es un lujo.
+    """
+    global _proximo_ntp_ms
+
+    if _proximo_ntp_ms is None:
+        # Primera vuelta con red. Si el arranque ya puso el nodo en hora, se
+        # agenda el proximo resync; si no (booteo sin WiFi), se intenta ya.
+        _proximo_ntp_ms = (ticks_add(ahora, config.T_RESYNC_NTP_MS)
+                           if reloj.sincronizado() else ahora)
+
+    if ticks_diff(ahora, _proximo_ntp_ms) < 0:
+        return
+
+    # Si falla se espera lo mismo que tras un fallo de HTTP, para no pagar el
+    # timeout del NTP en cada vuelta del bucle.
+    espera = (config.T_RESYNC_NTP_MS if reloj.sincronizar()
+              else config.T_REINTENTO_RED_MS)
+    _proximo_ntp_ms = ticks_add(ahora, espera)
+
+
 def degradado():
     """True si el nodo no logra hablar con el servidor.
 
@@ -103,14 +190,14 @@ def _post(ruta, cuerpo):
         if r.status_code != 200:
             _log("HTTP", r.status_code, "en", ruta)
             _degradado = True
-            _proximo_intento_ms = ticks_ms() + config.T_REINTENTO_RED_MS
+            _proximo_intento_ms = ticks_add(ticks_ms(), config.T_REINTENTO_RED_MS)
             return None
         _degradado = False
         return r.json()
     except Exception as e:
         _log("fallo", ruta, "->", e)
         _degradado = True
-        _proximo_intento_ms = ticks_ms() + config.T_REINTENTO_RED_MS
+        _proximo_intento_ms = ticks_add(ticks_ms(), config.T_REINTENTO_RED_MS)
         return None
     finally:
         # Sin close() se filtran sockets y a las pocas horas el nodo se
@@ -134,14 +221,14 @@ def _get(ruta):
         r = requests.get(config.SERVER_URL + ruta, timeout=config.T_TIMEOUT_HTTP_S)
         if r.status_code != 200:
             _degradado = True
-            _proximo_intento_ms = ticks_ms() + config.T_REINTENTO_RED_MS
+            _proximo_intento_ms = ticks_add(ticks_ms(), config.T_REINTENTO_RED_MS)
             return None
         _degradado = False
         return r.json()
     except Exception as e:
         _log("fallo", ruta, "->", e)
         _degradado = True
-        _proximo_intento_ms = ticks_ms() + config.T_REINTENTO_RED_MS
+        _proximo_intento_ms = ticks_add(ticks_ms(), config.T_REINTENTO_RED_MS)
         return None
     finally:
         if r is not None:
@@ -226,8 +313,15 @@ def tareas(ahora, al_actualizar_whitelist):
     """
     global _ultimo_heartbeat_ms, _ultima_whitelist_ms
 
-    if not config.USAR_RED or not conectada():
+    if not config.USAR_RED:
         return
+    # Lo primero es tener WiFi. Antes esto era un `return` seco: si la red se
+    # caia despues del arranque, el nodo no volvia a intentar nunca.
+    if not _asegurar_wifi(ahora):
+        return
+    # Con red, mantener la hora. Va antes del backoff de HTTP porque un
+    # servidor caido no tiene por que dejar al nodo fuera de hora.
+    _asegurar_hora(ahora)
     # Backoff: mientras el servidor no responda, no se reintenta en cada
     # vuelta. Si no, el bucle principal se comeria un timeout cada 50 ms.
     if ticks_diff(ahora, _proximo_intento_ms) < 0:

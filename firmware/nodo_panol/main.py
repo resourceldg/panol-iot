@@ -31,12 +31,15 @@ PROMESA = "PROMESA"      # Se espera el flanco del reed hasta 10 s.
 
 
 def log(tag, *args):
-    """Salida de consola uniforme, con el uptime al frente.
+    """Salida de consola uniforme, con la hora al frente.
 
-    El uptime hace legible la secuencia temporal cuando se depura sin
-    reloj real: se ve cuanto tardo la promesa, si el antirrebote actuo, etc.
+    Si el nodo esta en hora (NTP), muestra hora argentina HH:MM:SS. En banco
+    sin red no hay reloj real, asi que cae al uptime en ms, que igual sirve
+    para medir la secuencia (cuanto tardo la promesa, el antirrebote, etc.).
     """
-    print("[{:>8}] [{}]".format(ticks_ms(), tag), *args)
+    hora = reloj.hora_local()
+    marca = hora if hora is not None else "{:>8}ms".format(ticks_ms())
+    print("[{:>10}] [{}]".format(marca, tag), *args)
 
 
 # --- Identidad de arranque ------------------------------------------------
@@ -407,6 +410,11 @@ if lector is not None:
 # Red y hora. Se hace ANTES de reportar el estado inicial para que ese
 # primer evento salga ya con timestamp real. Que falle no impide arrancar:
 # la puerta funciona igual y todo queda en cola.log.
+#
+# gc.collect() antes de levantar el WiFi: el driver necesita un bloque de
+# RAM contiguo y, tras leer la cola y la whitelist, la memoria queda
+# fragmentada. Sin esto, con la cola grande, falla con "WiFi Out of Memory".
+gc.collect()
 if red.conectar():
     reloj.sincronizar()
     recargar_uids()

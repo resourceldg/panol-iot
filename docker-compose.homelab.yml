@@ -1,0 +1,80 @@
+# Despliegue del CEREBRO en el homelab (etapa 2).
+#
+# El homelab ya provee broker, base y tablero (repo `homelab`, stack `panol`).
+# Este compose agrega lo que falta —la API, el puente y el planificador— y los engancha a
+# la red `panol`, que ya existe. Por eso acá no hay postgres ni mosquitto: la
+# base es una sola, y duplicarla partiría la auditoría en dos.
+#
+# Correr EN el servidor, con el repo clonado ahí:
+#     docker compose -f docker-compose.homelab.yml up -d --build
+#
+# Las credenciales NO viven acá: salen de /etc/panol/app.env, que genera
+# Ansible (rol `panol`) y es legible por el grupo `ansible`.
+name: panol-app
+
+services:
+  api:
+    build: ./server
+    container_name: panol-api
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    env_file: /etc/panol/app.env
+    # El nodo ESP32 reporta por HTTP a este puerto desde la WiFi, así que sí o
+    # sí escucha en la red. UFW lo limita a las subredes de dispositivos (rol
+    # panol, `panol_device_cidrs`); no está expuesto a internet.
+    ports:
+      - "${PANOL_API_BIND:-0.0.0.0}:18500:18500"
+    networks: [panol]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+    # Crea el esquema y corre la recuperación post-corte antes de servir.
+    command: >
+      sh -c "python -c 'import api.app as a; a.preparar()' &&
+             python -m gunicorn --bind 0.0.0.0:18500 --workers 2 api.app:app"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:18500/salud')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  puente:
+    build: ./server
+    container_name: panol-puente-mqtt
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    env_file: /etc/panol/app.env
+    networks: [panol]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+    command: ["python", "puente_mqtt.py"]
+
+  planificador:
+    build: ./server
+    container_name: panol-planificador
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    env_file: /etc/panol/app.env
+    networks: [panol]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 192M
+    # El latido del servidor. No depende de la api: si la cáscara HTTP se cae,
+    # las sesiones tienen que seguir cerrándose igual.
+    #
+    # También despacha las alarmas a EMATP. Las credenciales salen de
+    # /etc/panol/app.env; sin EMATP_URL la integración queda inactiva.
+    command: ["python", "planificador.py"]
+
+networks:
+  # La crea el stack del homelab (compose/panol/compose.yml). Acá se usa tal
+  # cual: dentro de ella, `postgres` y `mosquitto` resuelven por nombre.
+  panol:
+    external: true

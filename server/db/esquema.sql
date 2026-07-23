@@ -173,3 +173,24 @@ CREATE TABLE IF NOT EXISTS eventos_procesados (
     tipo       TEXT,
     recibido   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- --- Migraciones idempotentes --------------------------------------------
+-- El esquema se aplica entero en cada arranque, así que los cambios sobre
+-- tablas que ya existen viven acá. `IF NOT EXISTS` los hace inocuos tanto en
+-- una base nueva como en una con datos.
+
+-- Cuántas veces se reanudó esta sesión (mismo llavero volviendo del recreo).
+-- El contador deja el hueco a la vista en vez de fabricar una continuidad que
+-- no existió.
+ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS reanudaciones INTEGER NOT NULL DEFAULT 0;
+
+-- La purga de retención borra por fecha: sin estos índices, cada pasada sería
+-- un scan completo de la tabla más grande del sistema.
+CREATE INDEX IF NOT EXISTS ix_eventos_procesados_recibido ON eventos_procesados (recibido);
+CREATE INDEX IF NOT EXISTS ix_eventos_armario_ts          ON eventos_armario (timestamp);
+CREATE INDEX IF NOT EXISTS ix_alarmas_ts                  ON alarmas (timestamp);
+
+-- Cuándo se intentó mandar esta alarma a EMATP por última vez. Sin este dato el
+-- reintento solo puede ser "cada vuelta", y contra un plan gratuito (Vercel
+-- Hobby + Neon) eso despierta una función y una base cada minuto para nada.
+ALTER TABLE alarmas ADD COLUMN IF NOT EXISTS ultimo_intento TIMESTAMPTZ;

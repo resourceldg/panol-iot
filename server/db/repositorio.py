@@ -56,8 +56,25 @@ def conectar(dsn: str | None = None) -> psycopg.Connection:
     return conn
 
 
+# Clave arbitraria y estable del lock de aviso ("panol" en ASCII). Cualquier
+# proceso que vaya a crear el esquema pide ESTA misma.
+_LOCK_ESQUEMA = 0x70616E6F6C
+
+
 def inicializar(conn: psycopg.Connection) -> None:
-    conn.execute(RUTA_ESQUEMA.read_text(encoding="utf-8"))
+    """Crea el esquema, serializado con un lock de aviso.
+
+    `CREATE TABLE IF NOT EXISTS` NO es seguro entre procesos concurrentes: la
+    api y el puente arrancan juntos, los dos ven que la tabla no existe y los
+    dos la crean; el que pierde revienta con UniqueViolation sobre `pg_type`.
+    Con el lock, el segundo espera al primero y encuentra todo hecho.
+
+    El lock es de transacción, así que se suelta solo al terminar — incluso si
+    el esquema falla a la mitad.
+    """
+    with conn.transaction():
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (_LOCK_ESQUEMA,))
+        conn.execute(RUTA_ESQUEMA.read_text(encoding="utf-8"))
 
 
 # --- Topología -----------------------------------------------------------
@@ -86,8 +103,18 @@ def registrar_heartbeat(
     uptime_s: int | None = None,
     rssi: int | None = None,
     modo_degradado: bool = False,
-) -> None:
+) -> bool:
+    """Registra el heartbeat. Devuelve True si el nodo ENTRÓ en modo degradado.
+
+    La transición (no el estado sostenido) es lo que dispara la alarma
+    MODO_DEGRADADO una sola vez por episodio: un nodo degradado manda un
+    heartbeat por minuto y no debe generar una alarma por minuto.
+    """
     asegurar_ubicacion(conn, ubicacion_id)
+    fila = conn.execute(
+        "SELECT modo_degradado FROM nodos WHERE id = %s", (nodo_id,)
+    ).fetchone()
+    antes = bool(fila["modo_degradado"]) if fila else False
     conn.execute(
         """
         INSERT INTO nodos (id, ubicacion_id, rol, ultimo_heartbeat,
@@ -101,6 +128,45 @@ def registrar_heartbeat(
         """,
         (nodo_id, ubicacion_id, rol, ahora(), modo_degradado, uptime_s, rssi),
     )
+    return modo_degradado and not antes
+
+
+def estado_puerta_actual(
+    conn: psycopg.Connection, ubicacion_id: str
+) -> tuple[str | None, datetime | None]:
+    """Último estado del reed y desde cuándo. El reed solo reporta cambios,
+    así que el último evento ABIERTO marca cuándo empezó a estar abierta."""
+    fila = conn.execute(
+        "SELECT estado_reed, timestamp FROM eventos_puerta"
+        " WHERE ubicacion_id = %s ORDER BY timestamp DESC, id DESC LIMIT 1",
+        (ubicacion_id,),
+    ).fetchone()
+    if not fila:
+        return None, None
+    return fila["estado_reed"], fila["timestamp"]
+
+
+def alarma_existe_desde(
+    conn: psycopg.Connection,
+    ubicacion_id: str,
+    codigo: str,
+    desde: datetime,
+    nodo_id: str | None = None,
+) -> bool:
+    """¿Ya hay una alarma de este código desde `desde`? Implementa el one-shot
+    de estados sostenidos sin guardar un flag: se lee de la propia tabla.
+
+    `nodo_id` acota la pregunta a un nodo (mirando el detalle). Sin eso, dos
+    nodos mudos de la misma ubicación compartirían el one-shot y el segundo
+    quedaría tapado por el primero.
+    """
+    fila = conn.execute(
+        "SELECT 1 FROM alarmas WHERE ubicacion_id = %s AND codigo = %s"
+        " AND timestamp >= %s"
+        " AND (%s::text IS NULL OR detalle->>'nodo_id' = %s) LIMIT 1",
+        (ubicacion_id, codigo, desde, nodo_id, nodo_id),
+    ).fetchone()
+    return fila is not None
 
 
 def nodos_sin_heartbeat(conn: psycopg.Connection, umbral_s: int = 300) -> list[dict]:
@@ -132,9 +198,17 @@ def marcar_procesado(
 ) -> None:
     if not event_id:
         return
+    # SIN `ON CONFLICT DO NOTHING`, y es a propósito. Con él, dos procesos que
+    # ingieren el MISMO evento a la vez (la api por HTTP y el puente por MQTT,
+    # que es el despliegue real) pasaban los dos el chequeo de `ya_procesado`,
+    # los dos aplicaban sus efectos y la marca duplicada se descartaba en
+    # silencio: el evento quedaba registrado dos veces. Dejando que la clave
+    # primaria falle, la transacción entera se deshace y `servicio.ingerir` lo
+    # trata como lo que es, un duplicado. La idempotencia la garantiza la base,
+    # no el orden en que corran los procesos.
     conn.execute(
         "INSERT INTO eventos_procesados (event_id, nodo_id, tipo)"
-        " VALUES (%s, %s, %s) ON CONFLICT (event_id) DO NOTHING",
+        " VALUES (%s, %s, %s)",
         (event_id, nodo_id, tipo),
     )
 
@@ -186,6 +260,35 @@ def sesion_vigente_en(
     return _a_sesion(fila) if fila else None
 
 
+def sesion_reanudable(
+    conn: psycopg.Connection, ubicacion_id: str, uid_hex: str, ts: datetime,
+    ventana_s: int,
+) -> int | None:
+    """Turno del MISMO llavero, cerrado por ausencia hace poco.
+
+    Solo AUSENCIA y CIERRE_SISTEMA: un RELEVO significa que otro se hizo cargo
+    en el medio, y ahí el turno anterior terminó de verdad. Tampoco se reanuda
+    una sesión INCONSISTENTE — esa quedó marcada para revisión y reabrirla
+    borraría la marca.
+    """
+    fila = conn.execute(
+        """
+        SELECT id FROM sesiones
+        WHERE ubicacion_id = %s
+          AND uid_hex = %s
+          AND estado = 'COMPLETA'
+          AND motivo_cierre IN ('AUSENCIA', 'CIERRE_SISTEMA')
+          AND hora_fin IS NOT NULL
+          AND hora_fin > %s - make_interval(secs => %s)
+          AND hora_fin <= %s
+        ORDER BY hora_fin DESC
+        LIMIT 1
+        """,
+        (ubicacion_id, uid_hex, ts, ventana_s, ts),
+    ).fetchone()
+    return fila["id"] if fila else None
+
+
 # --- Aplicación de efectos ----------------------------------------------
 
 
@@ -222,6 +325,18 @@ def _aplicar_uno(conn: psycopg.Connection, e) -> None:
                     %s, %s, 'EN_CURSO')
             """,
             (e.ubicacion_id, e.uid_hex, e.uid_hex, e.ts, e.ts),
+        )
+
+    elif isinstance(e, m.ReanudarSesion):
+        # Vuelve a abrir el MISMO turno: se limpia el cierre y se cuenta la
+        # interrupción. La hora de inicio no se toca — el turno empezó cuando
+        # empezó, y eso es lo que la auditoría tiene que poder responder.
+        conn.execute(
+            "UPDATE sesiones SET estado = 'EN_CURSO', hora_fin = NULL,"
+            " motivo_cierre = NULL, ultima_actividad = %s,"
+            " reanudaciones = reanudaciones + 1,"
+            " alarmada_puerta_abierta = FALSE WHERE id = %s",
+            (e.ts, e.sesion_id),
         )
 
     elif isinstance(e, m.FinalizarSesion):

@@ -113,6 +113,39 @@ def construir_evento(tipo: str, datos: dict) -> m.Evento:
     )
 
 
+def resumen_efectos(efectos: list) -> str:
+    """Una línea de log con marca clara de si el evento cayó en una sesión.
+
+    Es la distinción que importa de un vistazo: un evento CON sesión es
+    actividad normal; SIN sesión es anomalía (alarma). Se decide por los
+    efectos, no hay que cruzar tablas para leerlo.
+    """
+    if not efectos:
+        return "· duplicado (ya procesado)"
+    nombres = [type(e).__name__ for e in efectos]
+    alarmas = [e.codigo for e in efectos if type(e).__name__ == "Alarma"]
+    acceso = next((e for e in efectos if type(e).__name__ == "RegistrarAcceso"), None)
+
+    # Anomalia primero: es lo que hay que ver de un vistazo al debuggear.
+    if alarmas:
+        return "SIN SESION  ! " + " ".join(alarmas)
+    if "CrearSesion" in nombres and "FinalizarSesion" in nombres:
+        return "CON SESION  ~ RELEVO (cierra + nace)"
+    if "CrearSesion" in nombres:
+        return "CON SESION  + nace sesion (acceso CONCEDIDO)"
+    if "FinalizarSesion" in nombres:
+        motivo = next(e.motivo for e in efectos
+                      if type(e).__name__ == "FinalizarSesion")
+        return "CON SESION  x cierra sesion ({})".format(motivo)
+    if acceso is not None:
+        # Acceso que NO creo sesion: credencial rechazada o sin ingreso.
+        marca = "! " if acceso.resultado == "DENEGADO" else "  "
+        return "-  {}acceso {}".format(marca, acceso.resultado)
+    if {"MarcarActividad", "RegistrarPuerta", "RegistrarArmario"} & set(nombres):
+        return "CON SESION    " + " ".join(nombres)
+    return "-  " + " ".join(nombres)
+
+
 def aplanar_sobre(sobre: dict) -> tuple[str, dict]:
     """Convierte el sobre que escribe el firmware en (tipo, datos planos)."""
     datos = dict(sobre.get("datos") or {})
@@ -136,13 +169,13 @@ def evento(tipo: str):
         ev = construir_evento(tipo, _cuerpo())
     except ValueError as e:
         codigo = 404 if "tipo desconocido" in str(e) else 400
+        # Un evento rechazado tiene que verse en el log: casi siempre es un
+        # nodo mal configurado o un contrato desalineado, no un ataque.
+        app.logger.warning("RECHAZADO %s (%d): %s", tipo, codigo, e)
         return jsonify({"ok": False, "error": str(e)}), codigo
 
     efectos = servicio.ingerir(conn(), ev)
-    app.logger.info(
-        "[%s] %s -> %s", ev.ubicacion_id, tipo,
-        [type(x).__name__ for x in efectos] or "sin efecto",
-    )
+    app.logger.info("[%s] %-8s %s", ev.ubicacion_id, tipo, resumen_efectos(efectos))
     return jsonify(
         {
             "ok": True,
@@ -183,7 +216,7 @@ def heartbeat():
     d = _cuerpo()
     if not d.get("nodo_id") or not d.get("ubicacion_id"):
         return jsonify({"ok": False, "error": "falta nodo_id o ubicacion_id"}), 400
-    repositorio.registrar_heartbeat(
+    entro_degradado = repositorio.registrar_heartbeat(
         conn(),
         nodo_id=d["nodo_id"],
         ubicacion_id=d["ubicacion_id"],
@@ -192,6 +225,16 @@ def heartbeat():
         rssi=d.get("rssi"),
         modo_degradado=bool(d.get("modo_degradado", False)),
     )
+    # El heartbeat normal no se logea (llega cada 60 s, seria ruido). Solo la
+    # TRANSICION a modo degradado, que genera la alarma de spec §9 una vez
+    # por episodio (el nodo opera contra la cache NVS por no llegar al server).
+    if entro_degradado:
+        repositorio.aplicar(conn(), [
+            m.Alarma(d["ubicacion_id"], "MODO_DEGRADADO", repositorio.ahora(),
+                     detalle={"nodo_id": d["nodo_id"], "rssi": d.get("rssi")})
+        ])
+        app.logger.warning("[%s] MODO DEGRADADO nodo=%s rssi=%s",
+                           d["ubicacion_id"], d["nodo_id"], d.get("rssi"))
     return jsonify({"ok": True})
 
 

@@ -65,15 +65,47 @@ T_WDT_MS = 8_000
 # --- Red ------------------------------------------------------------------
 # Subred WiFi aislada de IoT. Los nodos NO viven en la red de los alumnos ni
 # en la WLAN de admins: solo tienen que llegar al servidor local.
-WIFI_SSID = "CAMBIAR"
-WIFI_PASS = "CAMBIAR"
-SERVER_URL = "http://192.168.100.44:5000"
+# Las credenciales viven en secrets.py, que NO va al repositorio. Si el
+# archivo no esta (o falta una clave), se cae a placeholders y el nodo
+# arranca igual, en modo banco.
+try:
+    from secrets import WIFI_SSID, WIFI_PASS
+except ImportError:
+    WIFI_SSID = "CAMBIAR"
+    WIFI_PASS = "CAMBIAR"
 
-# Poner en False para trabajar en banco sin WiFi: el nodo funciona igual,
-# decide contra la whitelist local y acumula todo en cola.log.
-USAR_RED = False
+# IP del servidor EN la red del nodo, y el puerto de la API (18500).
+# Etapa 2: el server vive en el homelab (192.168.100.48). Para volver a probar
+# contra la notebook, cambiar por la linea comentada.
+SERVER_URL = "http://192.168.100.48:18500"
+# SERVER_URL = "http://192.168.100.44:18500"   # notebook, pruebas de banco
+
+# Credenciales MQTT de este nodo en el broker del homelab. Todavia NO se usan:
+# la placa reporta por HTTP y el MQTT lo habla el puente del servidor. Quedan
+# aca para cuando el firmware publique directo (etapa 2b). Son las mismas que
+# entrega el homelab en /etc/panol/secrets/nodos.txt.
+MQTT_HOST = "192.168.100.48"
+MQTT_PORT = 1883
+MQTT_USER = "nodo-panol-puerta"
+MQTT_PASS = "cambiar-nodo-puerta"
+
+# True: intenta WiFi + NTP + hablar con el server. Si el server no esta, el
+# nodo igual anda: asocia el WiFi, sincroniza la hora y encola en cola.log
+# hasta que el server aparezca (modo degradado).
+USAR_RED = True
 
 T_CONEXION_WIFI_MS = 15_000     # Espera maxima al asociarse, solo al bootear
+                                # (y ventana de cada reintento en caliente)
+T_REINTENTO_WIFI_MS = 30_000    # Entre reasociaciones cuando se cae el AP.
+                                # Reintentar mas seguido no acelera nada: el
+                                # driver tarda lo suyo y el nodo tiene que
+                                # seguir mirando los sensores mientras tanto.
+T_RESYNC_NTP_MS = 6 * 3_600_000  # Resync de reloj cada 6 h. El ESP32 no tiene
+                                # RTC con pila y deriva; en la cola offline el
+                                # timestamp es lo que atribuye el evento a su
+                                # sesion.
+T_TIMEOUT_NTP_S = 2             # Acotado: sin esto, un NTP inalcanzable puede
+                                # bloquear el bucle principal ~30 s
 T_TIMEOUT_HTTP_S = 3            # Corto: la red nunca debe demorar la puerta
 T_HEARTBEAT_MS = 60_000         # Señal de vida (spec seccion 12)
 T_REFRESCO_WHITELIST_MS = 900_000   # 15 min

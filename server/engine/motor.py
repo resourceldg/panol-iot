@@ -29,6 +29,7 @@ from .modelo import (
     MarcarActividad,
     MarcarAlarmadaPuertaAbierta,
     MarcarInconsistente,
+    ReanudarSesion,
     RegistrarAcceso,
     RegistrarArmario,
     RegistrarPir,
@@ -94,6 +95,19 @@ def _acceso(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
     # ambigüedad salida/re-ingreso, que en v1 no se puede desambiguar.
     if sesion is not None:
         efectos.append(FinalizarSesion(sesion.id, RELEVO, evento.ts))
+        efectos.append(CrearSesion(evento.ubicacion_id, uid, evento.ts))
+        return efectos
+
+    # Sin sesión abierta: puede ser alguien que llega… o el mismo que volvió
+    # del recreo después de que la ausencia le cerrara el turno. Quien llama
+    # provee la sesión reanudable (misma tarjeta, cerrada por ausencia dentro
+    # de cfg.t_reanudacion_s). Reanudar en vez de crear evita que un turno de
+    # cuatro horas quede partido en seis sesiones por ir y venir.
+    reanudable = evento.datos.get("sesion_reanudable")
+    if reanudable is not None:
+        efectos.append(ReanudarSesion(reanudable, evento.ts))
+        return efectos
+
     efectos.append(CrearSesion(evento.ubicacion_id, uid, evento.ts))
     return efectos
 
@@ -126,16 +140,27 @@ def _pir(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
     Consecuencia: `eventos_pir` solo acumula movimientos indebidos.
 
     Ya viene throttleado por el nodo (1 cada 30 s).
+
+    La presencia es una condición SOSTENIDA muestreada cada 30 s, no un hecho
+    puntual: una persona trabajando media hora sin sesión son ~60 muestras. El
+    registro se guarda entero —es la evidencia— pero la alarma se agrupa por
+    episodio, igual que PUERTA_ABIERTA_*. Sin esto, media hora de presencia
+    indebida son 60 alarmas y, con EMATP conectado, 60 tickets por una persona.
+
+    `ya_alarmado` lo provee quien llama (es un dato de la base): "ya hubo
+    alarma de este código en los últimos cfg.t_recordatorio_alarma_s". Así el
+    episodio se rearma solo, y si la presencia continúa vuelve a alarmar cada
+    ese intervalo — no se pierde la señal de "esto sigue pasando".
     """
     if sesion is not None:
         return _actividad(sesion, evento.ts)
     # Puede ser intrusión, o el "falso cierre" de spec §9: alguien quieto a
     # quien el PIR no vio, cuya sesión se cerró por AUSENCIA. La distinción
     # la hace la auditoría mirando si viene justo después de un cierre.
-    return [
-        RegistrarPir(evento.ubicacion_id, None, evento.ts),
-        Alarma(evento.ubicacion_id, "PRESENCIA_SIN_SESION", evento.ts),
-    ]
+    efectos = [RegistrarPir(evento.ubicacion_id, None, evento.ts)]
+    if not evento.datos.get("ya_alarmado"):
+        efectos.append(Alarma(evento.ubicacion_id, "PRESENCIA_SIN_SESION", evento.ts))
+    return efectos
 
 
 def _armario(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
@@ -175,10 +200,24 @@ def _tarea_ausencia(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
     if sesion is None:
         return []
     inactivo_s = (evento.ts - sesion.ultima_actividad).total_seconds()
+
+    # Fin de jornada por QUIESCENCIA: silencio total y prolongado. Cierra aunque
+    # la puerta esté abierta, y ese es justamente el caso que antes quedaba
+    # colgado para siempre — alguien se fue sin cerrar y la ausencia, por
+    # diseño, no cierra con la puerta abierta. La alarma de puerta abierta
+    # sigue su curso; lo que se termina acá es la responsabilidad.
+    if inactivo_s >= cfg.t_jornada_quiescente_s:
+        return [FinalizarSesion(sesion.id, CIERRE_SISTEMA, evento.ts)]
+
     if inactivo_s < cfg.t_ausencia_s:
         return []
 
-    if evento.datos.get("reed_actual") == "CERRADO":
+    # Se cierra salvo que el reed diga EXPLÍCITAMENTE que la puerta está
+    # abierta. Antes se exigía un "CERRADO" explícito, y entonces una ubicación
+    # sin dato de reed (nunca reportó, o el sensor no está cableado) no cerraba
+    # nunca: quedaba un responsable eterno en el registro. Lo que falta en ese
+    # caso es información sobre la PUERTA, no sobre la ausencia de la persona.
+    if evento.datos.get("reed_actual") != "ABIERTO":
         return [FinalizarSesion(sesion.id, AUSENCIA, evento.ts)]
 
     # Puerta abierta sin gente: se fueron sin cerrar. La sesión NO se cierra
@@ -197,11 +236,75 @@ def _tarea_ausencia(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
     ]
 
 
+def _tarea_puerta_abierta(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
+    """Puerta físicamente abierta demasiado tiempo, HAYA O NO gente.
+
+    Distinta de PUERTA_ABIERTA_SIN_GENTE (esa exige ausencia): esta salta
+    aunque haya actividad, para el caso de puerta trabada o dejada abierta
+    a propósito. Vale con o sin sesión: es un hecho físico, no de sesión.
+
+    Quien llama provee `abierta_desde` (cuándo abrió) y `ya_alarmado` (si ya
+    hubo alarma en este episodio), porque son datos de la base. El one-shot
+    lo garantiza `ya_alarmado`: se rearma solo cuando la puerta se cierra.
+    """
+    if evento.datos.get("reed_actual") != "ABIERTO":
+        return []
+    abierta_desde = evento.datos.get("abierta_desde")
+    if abierta_desde is None or evento.datos.get("ya_alarmado"):
+        return []
+    if (evento.ts - abierta_desde).total_seconds() < cfg.t_puerta_abierta_s:
+        return []
+    return [
+        Alarma(
+            evento.ubicacion_id,
+            "PUERTA_ABIERTA_PROLONGADA",
+            evento.ts,
+            sesion_id=sesion.id if sesion else None,
+            detalle={"abierta_desde": abierta_desde.isoformat()},
+        )
+    ]
+
+
 def _tarea_fin_jornada(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
-    """Cierre administrativo. Nadie queda como responsable de un día para otro."""
+    """Cierre administrativo. Nadie queda como responsable de un día para otro.
+
+    `corte` es el instante de cierre de HOY (lo calcula quien llama, que es
+    quien sabe la zona horaria). Solo se cierran las sesiones que empezaron
+    ANTES del corte: si alguien fichó a las 22:30, esa sesión es de la jornada
+    siguiente y cerrarla en el próximo minuto sería absurdo.
+    """
     if sesion is None:
         return []
+    corte = evento.datos.get("corte")
+    if corte is not None and sesion.inicio >= corte:
+        return []
     return [FinalizarSesion(sesion.id, CIERRE_SISTEMA, evento.ts)]
+
+
+def _tarea_nodo_mudo(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
+    """Un nodo que dejó de latir. Ceguera silenciosa (spec §6).
+
+    Es lo más parecido a un fallo invisible que tiene el sistema: sin
+    heartbeats el servidor no recibe nada y, si nadie mira, "no pasa nada" se
+    confunde con "no me estoy enterando de nada". Por eso alarma.
+
+    Una sola alarma por episodio (`ya_alarmado`), que se rearma cuando el nodo
+    vuelve: un nodo muerto un fin de semana no debe generar una alarma por
+    minuto.
+    """
+    if evento.datos.get("ya_alarmado"):
+        return []
+    return [
+        Alarma(
+            evento.ubicacion_id,
+            "NODO_SIN_HEARTBEAT",
+            evento.ts,
+            detalle={
+                "nodo_id": evento.datos.get("nodo_id"),
+                "ultimo_heartbeat": evento.datos.get("ultimo_heartbeat"),
+            },
+        )
+    ]
 
 
 def _tarea_recuperacion(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
@@ -215,6 +318,9 @@ def _tarea_recuperacion(evento: Evento, sesion: Sesion | None, cfg: Config) -> l
     if sesion is None:
         return []
     inactivo_s = (evento.ts - sesion.ultima_actividad).total_seconds()
+    # OJO: acá NO va el cierre por quiescencia. Tras un corte no se sabe si el
+    # silencio fue del pañol o del servidor apagado, así que cerrar sería
+    # inventar una hora de salida. Marcar INCONSISTENTE es lo honesto.
     if inactivo_s < cfg.t_ausencia_s:
         return []
     return [
@@ -235,6 +341,8 @@ _MANEJADORES = {
     "pir": _pir,
     "armario": _armario,
     "tarea_ausencia": _tarea_ausencia,
+    "tarea_puerta_abierta": _tarea_puerta_abierta,
     "tarea_fin_jornada": _tarea_fin_jornada,
+    "tarea_nodo_mudo": _tarea_nodo_mudo,
     "tarea_recuperacion": _tarea_recuperacion,
 }

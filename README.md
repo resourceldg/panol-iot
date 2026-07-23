@@ -16,7 +16,9 @@ server/            Cerebro
   servicio.py      Une motor + persistencia
   api/app.py       Shell HTTP (Flask) — curl-testeable
   puente_mqtt.py   Shell MQTT — mismo motor, otro transporte
-  adapters/        emisor_ematp.py (webhook aislado) — etapa posterior
+  planificador.py  Latido: tareas periódicas del motor + purga diaria
+  retencion.py     Política de retención (docs/PERSISTENCIA.md)
+  adapters/        emisor_ematp.py: bandeja de salida hacia EMATP
   tests/           Simulador de escenarios (docs/DISENO.md §5)
 firmware/
   nodo_panol/      ESP32 #1: FSM local, cola en flash, WiFi
@@ -46,6 +48,35 @@ expuesto al host vive en el bloque 18000 y se configura en `.env`:
 | Node-RED | 18800 | 1880 |
 | PostgreSQL | 15432 (solo localhost) | 5432 |
 
+## Levantar en el homelab (etapa 2)
+
+El homelab ya corre el broker, la base y Node-RED (repo `homelab`, stack `panol`,
+documentado en `docs/panol-iot.md` de ese repo). Acá solo se despliega el
+cerebro, que se une a esa red en vez de levantar servicios propios:
+
+```bash
+# EN el servidor, con este repo clonado ahí
+docker compose -f docker-compose.homelab.yml up -d --build
+```
+
+No hay `.env` que llenar: las credenciales salen de `/etc/panol/app.env`, que
+genera Ansible. Diferencias con el stack local, y por qué:
+
+| | Local (banco) | Homelab |
+|---|---|---|
+| Broker | anónimo | usuario + clave + ACL por nodo |
+| Base y broker | los levanta este compose | ya están corriendo, se comparten |
+| API | `127.0.0.1:18500` | `0.0.0.0:18500`, abierto por UFW solo a la LAN |
+
+El broker del homelab **no** es anónimo: un MQTT abierto en la red del colegio
+deja publicar un `acceso CONCEDIDO` falso y la auditoría deja de valer. Por eso
+el puente lee `MQTT_USER` / `MQTT_PASSWORD` y llama a `username_pw_set()` antes
+de conectar. Si no están definidas —el caso local— se conecta como siempre.
+
+Credenciales por defecto (conocidas a propósito, **cambiar antes del colegio**):
+`panol-servidor` / `cambiar-servidor-panol` para api y puente,
+`nodo-panol-puerta` / `cambiar-nodo-puerta` para el ESP32.
+
 ## Topics MQTT
 
 ```
@@ -68,12 +99,39 @@ PANOL_DSN=postgresql://panol:panol@localhost:15432/panol \
 Corren contra un PostgreSQL real: las garantías que más importan (el índice único parcial de
 "una sesión activa por ubicación") las da el motor de base, no el código.
 
+La capa de red del nodo se prueba sin hardware ni MicroPython (dobles de `network`,
+`urequests` y los `ticks_*`, simulando el bucle principal a 50 ms):
+
+```bash
+python -m unittest discover -s firmware/tests -t .
+```
+
 ## Hoja de ruta
 
 - **Etapa 1:** stack local + validar la máquina de estados con el simulador, y probar RFID,
-  PIR y reed sobre el ESP32 real.
+  PIR y reed sobre el ESP32 real. ✔
 - **Etapa 2:** despliegue en el homelab, expuesto LAN + WLAN (admins); nodo de armarios.
-- **Etapa 3:** integración con EMATP (webhook de salida).
+  Infra y credenciales listas; falta el tablero Node-RED y rotar las claves `cambiar-*`.
+- **Etapa 3:** integración con EMATP. Cada alarma es un ticket: por eso se agrupan por
+  episodio y no se purgan nunca (ver [docs/PERSISTENCIA.md](docs/PERSISTENCIA.md)).
+  Implementada — falta configurar `EMATP_URL` y `EMATP_TOKEN` y correr `migration_v7.sql`
+  del lado de EMATP.
+
+## Alarmas → tickets de EMATP
+
+El planificador vacía una **bandeja de salida**: la alarma se escribe primero en la base
+local y recién después se intenta el ticket. Si EMATP no está, queda pendiente
+(`enviada_ematp = false`) y se reintenta cada minuto — una alarma de seguridad no se
+pierde porque el otro sistema se cayó. La contracara es que EMATP puede recibirla dos
+veces, y por eso la idempotencia la resuelve EMATP con `origen_ref`.
+
+```bash
+EMATP_URL=https://<dominio>/api/integraciones/panol
+EMATP_TOKEN=<el mismo valor que PANOL_API_TOKEN en EMATP>
+```
+
+Sin esas variables la integración no hace nada y el sistema funciona igual, con las
+alarmas acumulándose en su tabla.
 
 ## Mapa de pines — nodo pañol (ESP32 #1, WROOM)
 

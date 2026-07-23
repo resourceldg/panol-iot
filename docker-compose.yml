@@ -4,6 +4,7 @@
 #   mosquitto   broker MQTT al que publican los nodos
 #   api         shell HTTP (spec §11) + panel de consulta para admins
 #   puente      suscriptor MQTT que alimenta el MISMO motor que la API
+#   planificador  latido: corre las tareas periódicas del motor
 #   nodered     dashboard y automatizaciones
 #
 # `api` y `puente` corren la misma imagen con distinto comando. Son dos
@@ -81,6 +82,10 @@ services:
       PANOL_DSN: postgresql://${POSTGRES_USER:-panol}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-panol}
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
+      # El broker local es anónimo y las ignora; van igual para que el puente
+      # se ejercite con el mismo camino que usa contra el broker del homelab.
+      MQTT_USER: ${MQTT_USER:-panol-servidor}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-cambiar-servidor-panol}
       TZ: ${TZ:-America/Argentina/Buenos_Aires}
     depends_on:
       postgres:
@@ -88,6 +93,21 @@ services:
       mosquitto:
         condition: service_started
     command: ["python", "puente_mqtt.py"]
+
+  planificador:
+    build: ./server
+    container_name: panol-planificador
+    restart: unless-stopped
+    environment:
+      PANOL_DSN: postgresql://${POSTGRES_USER:-panol}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-panol}
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # El latido: cierra sesiones por ausencia y fin de jornada, y alarma por
+    # puerta abierta y nodos mudos. Sin este proceso esas ramas del motor
+    # existen pero no corren nunca.
+    command: ["python", "planificador.py"]
 
   nodered:
     image: nodered/node-red:latest
