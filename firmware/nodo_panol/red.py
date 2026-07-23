@@ -29,6 +29,49 @@ _ultima_whitelist_ms = None
 _asociando_desde_ms = None   # Cuando empezo el intento de asociacion en curso
 _proximo_wifi_ms = 0         # Backoff entre intentos de reasociacion
 _proximo_ntp_ms = None       # Cuando toca (re)sincronizar el reloj
+_candidatas = []             # Redes por probar en este ciclo de reconexion
+_red_actual = None           # SSID al que se esta intentando asociar ahora
+
+
+# --- Selección de red -----------------------------------------------------
+
+
+def _clave_de(ssid):
+    """Contraseña configurada para un SSID, o None si no lo conocemos."""
+    for nombre, clave in config.REDES_WIFI:
+        if nombre == ssid:
+            return clave
+    return None
+
+
+def _redes_por_probar(wlan):
+    """Redes conocidas a intentar, la de mejor señal primero.
+
+    Se escanea el aire y se cruza con la lista configurada: no tiene sentido
+    intentar una red que no está presente. Si el scan falla —pasa en algunos
+    ports mientras el driver está raro—, se cae a probar TODAS las conocidas a
+    ciegas, en el orden de secrets.py: peor es no intentar nada.
+    """
+    try:
+        vistas = wlan.scan()  # (ssid, bssid, canal, rssi, seguridad, hidden)
+    except OSError as e:
+        _log("scan falló, se prueban todas a ciegas:", e)
+        return [(s, c) for s, c in config.REDES_WIFI]
+
+    # SSID de mejor RSSI primero. Se queda con las que además conocemos.
+    ordenadas = sorted(vistas, key=lambda r: r[3], reverse=True)
+    candidatas = []
+    ya = set()
+    for red in ordenadas:
+        try:
+            ssid = red[0].decode()
+        except (UnicodeError, AttributeError):
+            continue
+        clave = _clave_de(ssid)
+        if clave is not None and ssid not in ya:
+            candidatas.append((ssid, clave))
+            ya.add(ssid)
+    return candidatas
 
 
 def _log(*args):
@@ -53,18 +96,36 @@ def conectar():
 
     _wlan = network.WLAN(network.STA_IF)
     _wlan.active(True)
-    if not _wlan.isconnected():
-        _log("conectando a", config.WIFI_SSID)
-        _wlan.connect(config.WIFI_SSID, config.WIFI_PASS)
+    if _wlan.isconnected():
+        _log("ya conectado, IP", _wlan.ifconfig()[0])
+        return True
+
+    # Se prueban las redes conocidas presentes, la de mejor señal primero, y se
+    # reparte el presupuesto de tiempo entre ellas. Bloquea, pero solo acá al
+    # bootear: la puerta está trabada y nadie espera una decisión.
+    candidatas = _redes_por_probar(_wlan)
+    if not candidatas:
+        _log("ninguna red conocida a la vista; sigue en modo degradado")
+        return False
+
+    presupuesto = config.T_CONEXION_WIFI_MS
+    por_red = max(presupuesto // len(candidatas), 4000)
+    for ssid, clave in candidatas:
+        _log("conectando a", ssid)
+        try:
+            _wlan.disconnect()
+        except OSError:
+            pass
+        _wlan.connect(ssid, clave)
         inicio = ticks_ms()
         while (not _wlan.isconnected()
-               and ticks_diff(ticks_ms(), inicio) < config.T_CONEXION_WIFI_MS):
+               and ticks_diff(ticks_ms(), inicio) < por_red):
             pass
+        if _wlan.isconnected():
+            _log("conectado a", ssid, "| IP", _wlan.ifconfig()[0])
+            return True
 
-    if _wlan.isconnected():
-        _log("conectado, IP", _wlan.ifconfig()[0])
-        return True
-    _log("no se pudo conectar; el nodo sigue funcionando en modo degradado")
+    _log("no se pudo conectar a ninguna; el nodo sigue en modo degradado")
     return False
 
 
@@ -86,6 +147,7 @@ def _asegurar_wifi(ahora):
     es justo lo que el diseño prohibe.
     """
     global _wlan, _asociando_desde_ms, _proximo_wifi_ms, _ultima_whitelist_ms
+    global _candidatas, _red_actual
 
     if _wlan is None:
         # Solo pasa si `conectar()` no llego a correr. Se crea la interfaz en
@@ -96,14 +158,15 @@ def _asegurar_wifi(ahora):
 
     if _wlan.isconnected():
         if _asociando_desde_ms is not None:
-            _log("reasociado, IP", _wlan.ifconfig()[0])
+            _log("reasociado a", _red_actual, "| IP", _wlan.ifconfig()[0])
             _asociando_desde_ms = None
+            _candidatas = []      # ciclo cerrado: se rearma en la proxima caida
             # Al volver la red, la whitelist local puede estar vieja: se fuerza
             # un refresco en la proxima vuelta en vez de esperar los 15 min.
             _ultima_whitelist_ms = None
         return True
 
-    # Hay un intento en curso: darle su ventana antes de reintentar.
+    # Hay un intento en curso: darle su ventana antes de rotar a la siguiente.
     if (_asociando_desde_ms is not None
             and ticks_diff(ahora, _asociando_desde_ms) < config.T_CONEXION_WIFI_MS):
         return False
@@ -111,16 +174,28 @@ def _asegurar_wifi(ahora):
     if ticks_diff(ahora, _proximo_wifi_ms) < 0:
         return False
 
-    _log("sin WiFi, reasociando a", config.WIFI_SSID)
+    _wlan.active(True)
+
+    # Se agotaron las candidatas de este ciclo (o es el primero): se re-escanea
+    # el aire. Asi, si el nodo se mudo de red, descubre la nueva sin reset.
+    if not _candidatas:
+        _candidatas = _redes_por_probar(_wlan)
+        if not _candidatas:
+            _log("sin redes conocidas a la vista; se reintenta mas tarde")
+            _proximo_wifi_ms = ticks_add(ahora, config.T_REINTENTO_WIFI_MS)
+            return False
+
+    ssid, clave = _candidatas.pop(0)
+    _red_actual = ssid
+    _log("sin WiFi, probando", ssid)
     try:
-        _wlan.active(True)
         # Un disconnect() antes de reintentar saca al driver de un estado de
         # asociacion a medias, que es donde se queda cuando el AP desaparece.
         try:
             _wlan.disconnect()
         except OSError:
             pass
-        _wlan.connect(config.WIFI_SSID, config.WIFI_PASS)
+        _wlan.connect(ssid, clave)
     except OSError as e:
         _log("no se pudo lanzar la reasociacion:", e)
 

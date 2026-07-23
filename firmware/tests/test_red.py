@@ -37,12 +37,20 @@ class Ticks:
 
 
 class WLANFalsa:
-    """Doble del driver WiFi. `ap` es si el access point existe ahora."""
+    """Doble del driver WiFi.
+
+    `visibles` es {ssid: rssi} de los AP en el aire. `connect()` asocia solo si
+    el SSID está visible y la clave coincide con la configurada.
+    """
 
     def __init__(self):
         self.up = False
-        self.ap = False
         self.pedidos = 0
+        self.visibles = {}          # ssid -> rssi
+        self.claves = {}            # ssid -> clave correcta
+        self.ssid_actual = None
+        self.scan_rompe = False
+        self.escaneos = 0
 
     def active(self, *a):
         pass
@@ -50,9 +58,17 @@ class WLANFalsa:
     def isconnected(self):
         return self.up
 
+    def scan(self):
+        self.escaneos += 1
+        if self.scan_rompe:
+            raise OSError("scan no disponible")
+        # (ssid, bssid, canal, rssi, seguridad, hidden)
+        return [(s.encode(), b"", 1, rssi, 3, False) for s, rssi in self.visibles.items()]
+
     def connect(self, ssid, clave):
         self.pedidos += 1
-        self.up = self.ap
+        self.ssid_actual = ssid
+        self.up = (ssid in self.visibles and self.claves.get(ssid) == clave)
 
     def disconnect(self):
         self.up = False
@@ -103,7 +119,8 @@ def cargar_red():
         return f
 
     config = types.SimpleNamespace(
-        USAR_RED=True, WIFI_SSID="ssid", WIFI_PASS="clave",
+        USAR_RED=True,
+        REDES_WIFI=[("casa", "clave-casa"), ("colegio", "clave-colegio")],
         T_CONEXION_WIFI_MS=15_000, T_REINTENTO_WIFI_MS=30_000,
         T_RESYNC_NTP_MS=6 * 3_600_000, T_TIMEOUT_NTP_S=2,
         T_TIMEOUT_HTTP_S=3, T_HEARTBEAT_MS=60_000,
@@ -154,11 +171,14 @@ class PruebaRed(unittest.TestCase):
     # --- Arranque sin AP ---------------------------------------------------
 
     def test_sin_ap_no_bloquea_ni_habla_http(self):
+        # Ninguna red visible: no hay a qué asociarse.
         self.girar(250)
-        self.assertEqual(self.wlan.pedidos, 1, "reintenta demasiado seguido")
         self.assertEqual(self.peticiones, [], "intentó HTTP sin WiFi")
 
-    def test_sin_ap_reintenta_con_backoff(self):
+    def test_reintenta_con_backoff(self):
+        # Una red conocida presente pero con clave mala: el connect no asocia.
+        self.wlan.visibles = {"casa": -50}
+        self.wlan.claves = {"casa": "otra"}
         self.girar(5 * 60_000)
         # ~1 intento cada 30 s, no uno por vuelta del bucle.
         self.assertGreaterEqual(self.wlan.pedidos, 8)
@@ -168,7 +188,8 @@ class PruebaRed(unittest.TestCase):
 
     def test_al_volver_el_ap_se_pone_en_hora_y_refresca_whitelist(self):
         self.girar(60_000)
-        self.wlan.ap = True
+        self.wlan.visibles = {"casa": -50}
+        self.wlan.claves = {"casa": "clave-casa"}
         self.reloj.hay_ntp = True
         self.girar(60_000)
 
@@ -178,20 +199,30 @@ class PruebaRed(unittest.TestCase):
         self.assertTrue(any("heartbeat" in u for u in urls), "no mandó heartbeat")
 
     def test_ap_que_se_cae_en_caliente_se_reintenta(self):
-        """La regresión que motivó todo esto: antes el nodo quedaba mudo."""
-        self.wlan.ap = True
+        """La regresión que motivó todo esto: antes el nodo quedaba mudo.
+
+        Con el AP caído no hay a qué asociarse, así que el nodo no martilla
+        connect() a ciegas: re-escanea esperando que vuelva una red conocida.
+        Lo que importa es que sigue buscando y que reconecta al volver."""
+        self.wlan.visibles = {"casa": -50}
+        self.wlan.claves = {"casa": "clave-casa"}
         self.reloj.hay_ntp = True
         self.girar(60_000)
         self.assertTrue(self.wlan.isconnected())
 
-        self.wlan.ap = False
+        self.wlan.visibles = {}      # se cae el AP
         self.wlan.up = False
-        antes = self.wlan.pedidos
+        antes = self.wlan.escaneos
         self.girar(2 * 60_000)
-        self.assertGreaterEqual(self.wlan.pedidos - antes, 3)
+        self.assertGreaterEqual(self.wlan.escaneos - antes, 3, "dejó de buscar")
+
+        self.wlan.visibles = {"casa": -50}   # vuelve el AP
+        self.girar(60_000)
+        self.assertTrue(self.wlan.isconnected(), "no reconectó al volver la red")
 
     def test_ntp_caido_no_se_martilla(self):
-        self.wlan.ap = True
+        self.wlan.visibles = {"casa": -50}
+        self.wlan.claves = {"casa": "clave-casa"}
         self.girar(60_000)
         self.reloj.intentos = 0
         self.girar(60_000)
@@ -204,10 +235,57 @@ class PruebaRed(unittest.TestCase):
         """A los ~12.4 días ticks_ms() vuelve a cero. Con sumas comunes el
         backoff queda fuera de rango y las comparaciones dejan de tener
         sentido; con ticks_add el nodo sigue reintentando igual."""
+        self.wlan.visibles = {"casa": -50}
+        self.wlan.claves = {"casa": "otra"}   # presente pero no asocia
         self.ticks.ms = PERIODO - 10_000
         antes = self.wlan.pedidos
         self.girar(2 * 60_000)
         self.assertGreaterEqual(self.wlan.pedidos - antes, 3)
+
+    # --- Multi-red ---------------------------------------------------------
+
+    def test_elige_la_de_mejor_senal(self):
+        # Las dos conocidas presentes; colegio con mejor RSSI.
+        self.wlan.visibles = {"casa": -80, "colegio": -40}
+        self.wlan.claves = {"casa": "clave-casa", "colegio": "clave-colegio"}
+        self.girar(30_000)
+        self.assertTrue(self.wlan.isconnected())
+        self.assertEqual(self.wlan.ssid_actual, "colegio", "no eligió la de mejor señal")
+
+    def test_si_la_mejor_falla_prueba_la_siguiente(self):
+        # colegio tiene mejor señal pero la clave guardada no sirve; cae a casa.
+        self.wlan.visibles = {"casa": -70, "colegio": -40}
+        self.wlan.claves = {"casa": "clave-casa", "colegio": "cambió-la-clave"}
+        self.girar(2 * 60_000)
+        self.assertTrue(self.wlan.isconnected())
+        self.assertEqual(self.wlan.ssid_actual, "casa", "no rotó a la otra red")
+
+    def test_ignora_redes_que_no_conoce(self):
+        # Hay una red ajena con señal fuerte: no se intenta.
+        self.wlan.visibles = {"vecino": -30, "casa": -60}
+        self.wlan.claves = {"casa": "clave-casa"}
+        self.girar(30_000)
+        self.assertEqual(self.wlan.ssid_actual, "casa", "intentó una red ajena")
+
+    def test_se_muda_de_red_sin_reset(self):
+        # Arranca en casa; casa desaparece y aparece colegio. El nodo migra.
+        self.wlan.visibles = {"casa": -50}
+        self.wlan.claves = {"casa": "clave-casa", "colegio": "clave-colegio"}
+        self.girar(60_000)
+        self.assertEqual(self.wlan.ssid_actual, "casa")
+
+        self.wlan.visibles = {"colegio": -50}   # se cambió de ubicación
+        self.wlan.up = False
+        self.girar(3 * 60_000)
+        self.assertTrue(self.wlan.isconnected())
+        self.assertEqual(self.wlan.ssid_actual, "colegio", "no descubrió la red nueva")
+
+    def test_scan_roto_prueba_a_ciegas(self):
+        self.wlan.scan_rompe = True
+        self.wlan.visibles = {"casa": -50}       # está, aunque el scan no la vea
+        self.wlan.claves = {"casa": "clave-casa"}
+        self.girar(60_000)
+        self.assertTrue(self.wlan.isconnected(), "no probó a ciegas con el scan roto")
 
 
 if __name__ == "__main__":

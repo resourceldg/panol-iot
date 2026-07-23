@@ -65,14 +65,21 @@ T_WDT_MS = 8_000
 # --- Red ------------------------------------------------------------------
 # Subred WiFi aislada de IoT. Los nodos NO viven en la red de los alumnos ni
 # en la WLAN de admins: solo tienen que llegar al servidor local.
-# Las credenciales viven en secrets.py, que NO va al repositorio. Si el
-# archivo no esta (o falta una clave), se cae a placeholders y el nodo
-# arranca igual, en modo banco.
+#
+# Las credenciales viven en secrets.py, que NO va al repositorio. Ahi hay una
+# LISTA de redes conocidas (casa, banco, colegio): el nodo escanea y elige la
+# de mejor señal que conozca, y prueba la siguiente si falla. Si el archivo no
+# esta, se cae a una lista con un placeholder y el nodo arranca igual, en modo
+# banco. Se acepta tambien el formato viejo (WIFI_SSID/WIFI_PASS sueltos) para
+# no romper una placa ya grabada.
 try:
-    from secrets import WIFI_SSID, WIFI_PASS
+    from secrets import REDES_WIFI
 except ImportError:
-    WIFI_SSID = "CAMBIAR"
-    WIFI_PASS = "CAMBIAR"
+    try:
+        from secrets import WIFI_SSID, WIFI_PASS
+        REDES_WIFI = [(WIFI_SSID, WIFI_PASS)]
+    except ImportError:
+        REDES_WIFI = [("CAMBIAR", "CAMBIAR")]
 
 # IP del servidor EN la red del nodo, y el puerto de la API (18500).
 # Etapa 2: el server vive en el homelab (192.168.100.48). Para volver a probar
