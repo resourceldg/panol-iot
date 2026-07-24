@@ -125,12 +125,14 @@ para ver si una alarma se repite no es una prueba, es una siesta.
 
 | Variable | Default | Qué controla |
 |---|---|---|
-| `PANOL_T_RECORDATORIO_S` | 900 | cada cuánto se repite la alarma de una condición que sigue (presencia sin sesión, nodo mudo) |
+| `PANOL_T_RECORDATORIO_S` | 900 | cada cuánto se repite la alarma de **presencia** sin sesión |
+| `PANOL_T_RECORDATORIO_INFRA_S` | 3600 | cada cuánto se repite la alarma de **nodo mudo** (más espaciada: un nodo caído no cambia de un cuarto de hora al otro) |
 | `PANOL_T_AUSENCIA_S` | 900 | inactividad que cierra la sesión |
 | `PANOL_T_QUIESCENCIA_S` | 5400 | silencio que cierra la jornada, incluso con la puerta abierta |
 | `PANOL_T_REANUDACION_S` | 5400 | ventana para que el mismo llavero reanude su turno |
 | `PANOL_T_PUERTA_ABIERTA_S` | 300 | puerta abierta demasiado tiempo |
 | `PANOL_T_SIN_HEARTBEAT_S` | 300 | silencio de un nodo que dispara alarma |
+| `PANOL_T_PRECISION_ACTIVIDAD_S` | 60 | atraso tolerado en la marca de actividad (por debajo no se escribe) |
 
 En el homelab van en `/etc/panol/app.env`; en el stack local, en el `.env`.
 **Volvé a los valores de producción antes de montar en el colegio**: con el
