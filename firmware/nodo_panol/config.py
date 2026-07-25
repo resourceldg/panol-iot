@@ -119,6 +119,10 @@ T_REFRESCO_WHITELIST_MS = 900_000   # 15 min
 T_REINTENTO_RED_MS = 30_000     # Espera tras un fallo, para no bloquear
                                 # el bucle con un timeout en cada vuelta
 LOTE_COLA = 10                  # Eventos por POST al vaciar la cola
+MAX_COLA = 5000                 # Tope de la cola en flash. Un corte de red de
+                                # dias no debe llenar el almacenamiento ni tirar
+                                # el nodo: pasado esto se descartan los eventos
+                                # NUEVOS y se conserva la evidencia mas vieja.
 
 ARCHIVO_UIDS = "uids.txt"            # Tarjetas grabadas con el boton
 ARCHIVO_WHITELIST = "whitelist.txt"  # Copia local de la lista del servidor
