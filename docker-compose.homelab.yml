@@ -19,12 +19,14 @@ services:
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     env_file: /etc/panol/app.env
-    # El nodo ESP32 reporta por HTTP a este puerto desde la WiFi, así que sí o
-    # sí escucha en la red. UFW lo limita a las subredes de dispositivos (rol
-    # panol, `panol_device_cidrs`); no está expuesto a internet.
+    # El nodo llega de dos formas, y las dos conviven:
+    #   - En la LAN: HTTP directo a este puerto (UFW lo limita a las redes de
+    #     dispositivos). Rápido, sin TLS, para el nodo que está en el edificio.
+    #   - Desde afuera: HTTPS por Caddy (red `edge`), con token. Para el nodo en
+    #     otra red. Ver el bloque panol-api.<dominio> del Caddyfile.
     ports:
       - "${PANOL_API_BIND:-0.0.0.0}:18500:18500"
-    networks: [panol]
+    networks: [panol, edge]
     deploy:
       resources:
         limits:
@@ -77,4 +79,7 @@ networks:
   # La crea el stack del homelab (compose/panol/compose.yml). Acá se usa tal
   # cual: dentro de ella, `postgres` y `mosquitto` resuelven por nombre.
   panol:
+    external: true
+  # Red del proxy: Caddy alcanza a `api` por acá para publicarla con TLS.
+  edge:
     external: true

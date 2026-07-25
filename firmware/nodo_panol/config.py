@@ -96,6 +96,15 @@ MQTT_PORT = 1883
 MQTT_USER = "nodo-panol-puerta"
 MQTT_PASS = "cambiar-nodo-puerta"
 
+# Token para autenticar contra la API cuando se llega por internet (HTTPS via
+# Caddy). En la LAN, con la API sin token, se deja vacío. Es el mismo valor que
+# el homelab deja en /etc/panol/secrets/api.token. NO va al repo: ponerlo en
+# secrets.py junto con las redes.
+try:
+    from secrets import API_TOKEN
+except ImportError:
+    API_TOKEN = ""
+
 # True: intenta WiFi + NTP + hablar con el server. Si el server no esta, el
 # nodo igual anda: asocia el WiFi, sincroniza la hora y encola en cola.log
 # hasta que el server aparezca (modo degradado).

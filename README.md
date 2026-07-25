@@ -48,6 +48,22 @@ expuesto al host vive en el bloque 18000 y se configura en `.env`:
 | Node-RED | 18800 | 1880 |
 | PostgreSQL | 15432 (solo localhost) | 5432 |
 
+## API por internet (nodo en otra red)
+
+Por defecto el nodo reporta por HTTP en la LAN. Para que reporte estando en otra
+red, la API se publica por Caddy con TLS y token (lo arma el rol `panol` del
+homelab): `https://panol-api.<dominio>`. Capas de defensa:
+
+- Solo se enrutan los paths que usa un nodo (`/api/evento/*`, `/api/eventos`,
+  `/api/heartbeat`, `/api/whitelist`); el resto responde 404 en el proxy. Los
+  endpoints de consulta (estado, sesiones, alarmas) quedan solo en LAN/Tailscale.
+- Rate limit por IP y cuerpo acotado en Caddy.
+- La **API valida el token** (`PANOL_API_TOKEN`) en tiempo constante: si alguien
+  enruta al 18500 sin pasar por el proxy, igual lo rechaza.
+
+En el firmware, `API_TOKEN` va en `secrets.py` y `SERVER_URL` apunta al dominio
+HTTPS. En la LAN, sin token, `API_TOKEN=""` y se usa la IP directa.
+
 ## Levantar en el homelab (etapa 2)
 
 El homelab ya corre el broker, la base y Node-RED (repo `homelab`, stack `panol`,

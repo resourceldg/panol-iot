@@ -11,6 +11,7 @@ Probar sin hardware:
            "resultado":"CONCEDIDO","event_id":"demo-1"}'
 """
 
+import hmac
 import os
 import sys
 from datetime import datetime
@@ -27,7 +28,33 @@ from engine import modelo as m
 DSN = os.environ.get("PANOL_DSN")
 PUERTO = int(os.environ.get("PANOL_API_PORT", "18500"))
 
+# Token para autenticar a los nodos. Vacío = sin auth (modo banco, en LAN
+# aislada). En cuanto la API se publica a internet DEBE estar definido: es la
+# defensa que no depende del proxy — si mañana alguien enruta al 18500 sin
+# pasar por Caddy, la API igual exige el token.
+API_TOKEN = os.environ.get("PANOL_API_TOKEN", "").strip()
+
+# Endpoints que NO requieren token: solo el healthcheck del contenedor.
+_SIN_AUTH = {"/salud"}
+
 app = Flask(__name__)
+
+
+@app.before_request
+def _exigir_token():
+    """Valida el bearer token antes de tocar la lógica.
+
+    Comparación en tiempo constante: con un `==` normal, el tiempo de respuesta
+    filtra cuántos caracteres del token acertó quien prueba. Si no hay token
+    configurado, no se exige nada (modo banco).
+    """
+    if not API_TOKEN or request.path in _SIN_AUTH:
+        return None
+    cabecera = request.headers.get("Authorization", "")
+    recibido = cabecera[7:] if cabecera.startswith("Bearer ") else ""
+    if not hmac.compare_digest(recibido, API_TOKEN):
+        return jsonify({"ok": False, "error": "no autorizado"}), 401
+    return None
 
 
 # --- Conexión por request ------------------------------------------------

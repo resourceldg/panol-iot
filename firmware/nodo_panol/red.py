@@ -250,6 +250,12 @@ def rssi():
 # --- HTTP ----------------------------------------------------------------
 
 
+def _headers():
+    """Cabeceras de auth. Si no hay token configurado (banco), van vacías."""
+    token = getattr(config, "API_TOKEN", "")
+    return {"Authorization": "Bearer " + token} if token else {}
+
+
 def _post(ruta, cuerpo):
     """POST con timeout corto. Devuelve el JSON de respuesta o None."""
     global _degradado, _proximo_intento_ms
@@ -261,7 +267,8 @@ def _post(ruta, cuerpo):
     url = config.SERVER_URL + ruta
     r = None
     try:
-        r = requests.post(url, json=cuerpo, timeout=config.T_TIMEOUT_HTTP_S)
+        r = requests.post(url, json=cuerpo, headers=_headers(),
+                          timeout=config.T_TIMEOUT_HTTP_S)
         if r.status_code != 200:
             _log("HTTP", r.status_code, "en", ruta)
             _degradado = True
@@ -293,7 +300,8 @@ def _get(ruta):
 
     r = None
     try:
-        r = requests.get(config.SERVER_URL + ruta, timeout=config.T_TIMEOUT_HTTP_S)
+        r = requests.get(config.SERVER_URL + ruta, headers=_headers(),
+                         timeout=config.T_TIMEOUT_HTTP_S)
         if r.status_code != 200:
             _degradado = True
             _proximo_intento_ms = ticks_add(ticks_ms(), config.T_REINTENTO_RED_MS)
