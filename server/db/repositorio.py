@@ -340,9 +340,14 @@ def _aplicar_uno(conn: psycopg.Connection, e) -> None:
         )
 
     elif isinstance(e, m.FinalizarSesion):
+        # El cierre hay que empujarlo a EMATP (el tablero necesita ver la sesión
+        # terminada, con su motivo). Se reinicia el backoff: es un cambio NUEVO,
+        # no un reintento del envío anterior —que fue exitoso—, así que debe
+        # salir ya, sin esperar la ventana de espera creciente.
         conn.execute(
             "UPDATE sesiones SET hora_fin = %s, motivo_cierre = %s,"
-            " estado = 'COMPLETA' WHERE id = %s",
+            " estado = 'COMPLETA', push_pendiente = TRUE,"
+            " push_reintentos = 0, push_ultimo_intento = NULL WHERE id = %s",
             (e.ts, e.motivo, e.sesion_id),
         )
 
@@ -363,7 +368,8 @@ def _aplicar_uno(conn: psycopg.Connection, e) -> None:
 
     elif isinstance(e, m.MarcarInconsistente):
         conn.execute(
-            "UPDATE sesiones SET estado = 'INCONSISTENTE' WHERE id = %s",
+            "UPDATE sesiones SET estado = 'INCONSISTENTE', push_pendiente = TRUE,"
+            " push_reintentos = 0, push_ultimo_intento = NULL WHERE id = %s",
             (e.sesion_id,),
         )
 

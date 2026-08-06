@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import retencion
 import servicio
-from adapters import emisor_ematp
+from adapters import emisor_ematp, emisor_sesiones
 from db import repositorio
 from engine import modelo as m
 
@@ -106,10 +106,13 @@ def main():
             efectos = _una_vuelta(conn, cfg)
 
             # La bandeja de salida se vacía DESPUÉS de decidir: primero la
-            # alarma existe en la base local, después se intenta el ticket.
+            # alarma/sesión existe en la base local, después se intenta el push.
             resumen = emisor_ematp.despachar(conn)
             if resumen:
                 log("EMATP:", resumen)
+            resumen_ses = emisor_sesiones.despachar(conn)
+            if resumen_ses:
+                log("EMATP sesiones:", resumen_ses)
             for efecto in efectos:
                 nombre = type(efecto).__name__
                 if nombre == "Alarma":

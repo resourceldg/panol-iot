@@ -93,8 +93,25 @@ CREATE TABLE IF NOT EXISTS sesiones (
     estado                  TEXT NOT NULL DEFAULT 'EN_CURSO'
                                 CHECK (estado IN
                                 ('EN_CURSO', 'COMPLETA', 'INCONSISTENTE')),
-    alarmada_puerta_abierta BOOLEAN NOT NULL DEFAULT FALSE
+    alarmada_puerta_abierta BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Outbox hacia EMATP (Fase 2): la sesión se empuja al crearla y al
+    -- cerrarla. `push_pendiente` se prende en cada cambio de estado que le
+    -- importa al tablero (alta, cierre, inconsistente) — NO en cada actividad,
+    -- que es constante. El emisor lo apaga cuando EMATP confirma.
+    push_pendiente          BOOLEAN NOT NULL DEFAULT TRUE,
+    push_reintentos         INTEGER NOT NULL DEFAULT 0,
+    push_ultimo_intento     TIMESTAMPTZ
 );
+
+-- Para bases ya creadas (el CREATE de arriba no toca una tabla existente).
+ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS push_pendiente BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS push_reintentos INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS push_ultimo_intento TIMESTAMPTZ;
+
+-- Índice parcial del outbox: el emisor solo mira las que faltan empujar, que
+-- son pocas frente al total histórico.
+CREATE INDEX IF NOT EXISTS ix_sesiones_push_pendiente
+    ON sesiones (hora_inicio) WHERE push_pendiente;
 
 -- "A lo sumo una sesión activa POR UBICACIÓN" no puede depender solo del
 -- código: dos requests casi simultáneos podrían leer ambos "no hay sesión"
