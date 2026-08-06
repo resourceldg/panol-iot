@@ -39,13 +39,30 @@ CREATE UNIQUE INDEX IF NOT EXISTS ix_nodos_rol_unico
 
 -- --- Personas ------------------------------------------------------------
 
+-- La identidad canónica de las PERSONAS vive en EMATP (tabla users, en Neon).
+-- Acá se mantiene un espejo local, porque el pañol necesita resolver el
+-- usuario de un uid al crear la sesión sin depender de una consulta por
+-- internet. `ematp_user_id` es la clave que une ambos sistemas: viaja en todo
+-- lo que el pañol le empuja a EMATP para que allá se enlace sin ambigüedad.
 CREATE TABLE IF NOT EXISTS usuarios (
-    id       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    nombre   TEXT NOT NULL,
-    apellido TEXT NOT NULL,
-    rol      TEXT,
-    activo   BOOLEAN NOT NULL DEFAULT TRUE
+    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    ematp_user_id BIGINT,          -- users.id de EMATP; NULL = alta solo local
+    email         TEXT,            -- clave humana, espejo de EMATP
+    nombre        TEXT NOT NULL,
+    apellido      TEXT NOT NULL,
+    rol           TEXT,
+    activo        BOOLEAN NOT NULL DEFAULT TRUE
 );
+
+-- Para bases ya creadas antes de esta versión (el CREATE de arriba no toca una
+-- tabla existente). Idempotente.
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS ematp_user_id BIGINT;
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS email TEXT;
+
+-- Índice único COMPLETO (no parcial): los NULL no chocan entre sí en Postgres,
+-- así que varios usuarios solo-locales conviven, y sirve de árbitro para el
+-- ON CONFLICT (ematp_user_id) del sync tanto en bases nuevas como existentes.
+CREATE UNIQUE INDEX IF NOT EXISTS ix_usuarios_ematp ON usuarios (ematp_user_id);
 
 CREATE TABLE IF NOT EXISTS credenciales (
     id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
