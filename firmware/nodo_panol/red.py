@@ -11,6 +11,7 @@
 # vuelta del bucle mientras el servidor este caido.
 
 from time import ticks_ms, ticks_diff, ticks_add
+import gc
 
 import config
 import cola
@@ -267,6 +268,11 @@ def _post(ruta, cuerpo):
     url = config.SERVER_URL + ruta
     r = None
     try:
+        # Un handshake TLS necesita ~40-50 KB de heap CONTIGUO. Sin esto, la
+        # segunda o tercera conexion HTTPS seguida falla con
+        # MBEDTLS_ERR_PK_ALLOC_FAILED por fragmentacion. gc.collect() compacta
+        # y libera justo antes de pedir la memoria grande.
+        gc.collect()
         r = requests.post(url, json=cuerpo, headers=_headers(),
                           timeout=config.T_TIMEOUT_HTTP_S)
         if r.status_code != 200:
@@ -300,6 +306,7 @@ def _get(ruta):
 
     r = None
     try:
+        gc.collect()   # ver _post: el TLS necesita heap contiguo
         r = requests.get(config.SERVER_URL + ruta, headers=_headers(),
                          timeout=config.T_TIMEOUT_HTTP_S)
         if r.status_code != 200:
@@ -410,14 +417,21 @@ def tareas(ahora, al_actualizar_whitelist):
     if ticks_diff(ahora, _proximo_intento_ms) < 0:
         return
 
+    # UNA sola operacion de red por llamada. Cada handshake TLS necesita un
+    # bloque grande de heap contiguo; encadenar tres seguidos (whitelist +
+    # heartbeat + cola) agota la RAM aunque cada uno llame gc.collect(). Al
+    # hacer solo una y volver al bucle, los handshakes quedan separados por
+    # vueltas (~50 ms) y cada uno arranca con el heap ya liberado.
     if (_ultima_whitelist_ms is None
             or ticks_diff(ahora, _ultima_whitelist_ms) >= config.T_REFRESCO_WHITELIST_MS):
         _ultima_whitelist_ms = ahora
         _refrescar_whitelist(al_actualizar_whitelist)
+        return
 
     if (_ultimo_heartbeat_ms is None
             or ticks_diff(ahora, _ultimo_heartbeat_ms) >= config.T_HEARTBEAT_MS):
         _ultimo_heartbeat_ms = ahora
         _heartbeat()
+        return
 
     _vaciar_cola()

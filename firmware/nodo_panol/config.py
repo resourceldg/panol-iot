@@ -14,7 +14,11 @@ NODO_ID = "panol-lab01-puerta"
 # RC522 por SPI. VCC a 3.3 V exclusivamente (a 5 V se quema).
 PIN_RC522 = {"sck": 18, "mosi": 23, "miso": 19, "rst": 4, "cs": 5}
 
-PIN_RELE = 26        # Rele del solenoide
+PIN_RELE = 15        # MOSFET del solenoide (activo-LOW, ver abajo). GPIO15 es
+                     # STRAPPING y arranca en HIGH por pull-up interno; como el
+                     # reposo aca ES HIGH, ese estado inicial YA es el seguro:
+                     # el solenoide queda trabado durante el boot sin ayuda
+                     # externa. Feliz coincidencia, no accidente.
 PIN_REED = 27        # Reed switch: una pata aca, la otra a GND. Anduvo OK.
                      # (Evitar GPIO12: es strapping y traba el arranque.)
 PIN_PIR = 16         # PIR (contacto seco NC): C a GND, NC a este pin
@@ -45,7 +49,10 @@ SENSORES = {
 # El valor de reposo es el contrario, y es el que toma el pin al bootear.
 # Recordar el pull-up externo de 10 kOhm: el estado seguro por software
 # llega tarde, porque durante el reset el pin flota antes de correr codigo.
-RELE_ACTIVO_EN = 0
+RELE_ACTIVO_EN = 1   # ACTIVO-LOW, verificado en la placa: gate LOW -> energiza
+                     # el solenoide; reposo = HIGH. (La prueba con 1 daba la
+                     # logica invertida.) Reposo HIGH coincide con el estado
+                     # de arranque de GPIO15: seguro por hardware.
 
 # --- Tiempos (spec v1.0 seccion 12) --------------------------------------
 T_PULSO_SOLENOIDE_MS = 800    # Duracion del pulso sobre el solenoide
@@ -84,7 +91,8 @@ except ImportError:
 # IP del servidor EN la red del nodo, y el puerto de la API (18500).
 # Etapa 2: el server vive en el homelab (192.168.100.48). Para volver a probar
 # contra la notebook, cambiar por la linea comentada.
-SERVER_URL = "http://192.168.100.48:18500"
+# SERVER_URL = "http://192.168.100.48:18500"
+SERVER_URL = "https://homelab-01.tail4eda13.ts.net:8443"
 # SERVER_URL = "http://192.168.100.44:18500"   # notebook, pruebas de banco
 
 # Credenciales MQTT de este nodo en el broker del homelab. Todavia NO se usan:

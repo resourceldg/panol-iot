@@ -41,8 +41,20 @@ def sincronizar():
             # igual: mejor la hora con riesgo de demora que sin hora.
             pass
         ntptime.settime()
-        _sincronizado = True
-        print("[RELOJ] en hora por NTP:", ahora_iso())
+        # Sanidad: una respuesta NTP corrupta (o un rollover de era) puede
+        # devolver una fecha imposible, como el 2036 que se vio en el banco.
+        # Aceptarla corrompe TODOS los timestamps del arranque, y como el
+        # timestamp es lo que atribuye cada evento a su sesion, es peor que no
+        # tener hora. Si el año no es creible, se descarta y se reporta sin
+        # timestamp (el servidor pone el de llegada).
+        anio = time.gmtime()[0]
+        if not (2024 <= anio <= 2035):
+            _sincronizado = False
+            print("[RELOJ] NTP devolvio un año imposible (", anio,
+                  "); se descarta y se usaran timestamps del servidor")
+        else:
+            _sincronizado = True
+            print("[RELOJ] en hora por NTP:", ahora_iso())
     except Exception as e:
         # Sin red, sin DNS o servidor NTP caido. No es fatal.
         _sincronizado = False
