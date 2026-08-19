@@ -1,0 +1,1289 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Nodo Pañol — Hardware y Lógica</title>
+<style>
+  @page { size: A4; margin: 15mm 14mm 14mm 14mm; }
+
+  :root{
+    --ink:#15181d;
+    --ink-2:#3d4650;
+    --muted:#5d6773;
+    --line:#d7dde5;
+    --line-soft:#e8edf2;
+    --bg-soft:#f5f7fa;
+    --sig:#1d4ed8;
+    --v33:#0f8a4d;
+    --v12:#c62828;
+    --gnd:#4b5563;
+    --warn-bg:#fff7e6; --warn-line:#e0a300; --warn-ink:#7a5200;
+    --dang-bg:#fdecec; --dang-line:#d32f2f; --dang-ink:#8a1c1c;
+    --ok-bg:#edf7f0;  --ok-line:#2e9e5b;  --ok-ink:#1c5e37;
+    --info-bg:#eef3fd; --info-line:#3b6fd4; --info-ink:#1e3f80;
+  }
+
+  *{ box-sizing:border-box; }
+
+  body{
+    font-family: system-ui, "Segoe UI", "Liberation Sans", "DejaVu Sans", Arial, sans-serif;
+    color:var(--ink);
+    font-size:9.6pt;
+    line-height:1.5;
+    margin:0;
+    -webkit-print-color-adjust:exact;
+    print-color-adjust:exact;
+  }
+
+  code, .mono{ font-family:"DejaVu Sans Mono","Liberation Mono",Menlo,Consolas,monospace; }
+  code{ font-size:0.88em; background:var(--bg-soft); padding:0.08em 0.32em; border-radius:3px; border:1px solid var(--line-soft); }
+
+  h1,h2,h3,h4{ line-height:1.2; margin:0; font-weight:650; }
+
+  /* ---------- Portada ---------- */
+  .cover{ height:250mm; display:flex; flex-direction:column; }
+  .cover-top{ flex:1; }
+  .eyebrow{ font-size:8.5pt; letter-spacing:.16em; text-transform:uppercase; color:var(--muted); font-weight:600; }
+  .cover h1{ font-size:30pt; letter-spacing:-.02em; margin:6mm 0 3mm; }
+  .cover .sub{ font-size:13pt; color:var(--muted); font-weight:400; max-width:150mm; line-height:1.4; }
+  .rule{ height:3px; background:var(--ink); width:26mm; margin:7mm 0; }
+  .cover-meta{ display:grid; grid-template-columns:repeat(2,1fr); gap:5mm 8mm; margin-top:10mm; max-width:150mm; }
+  .cover-meta div{ border-top:1px solid var(--line); padding-top:2mm; }
+  .cover-meta dt{ font-size:7.6pt; text-transform:uppercase; letter-spacing:.1em; color:var(--muted); font-weight:600; }
+  .cover-meta dd{ margin:1mm 0 0; font-size:10pt; }
+  .cover-foot{ border-top:1px solid var(--line); padding-top:3mm; font-size:8.4pt; color:var(--muted); }
+
+  /* ---------- Estructura ---------- */
+  .page-break{ break-before:page; }
+  section{ break-inside:auto; }
+
+  h2.sec{
+    font-size:15pt; letter-spacing:-.01em;
+    margin:0 0 4mm; padding-bottom:2mm;
+    border-bottom:2px solid var(--ink);
+    display:flex; align-items:baseline; gap:3.5mm;
+    break-after:avoid;
+  }
+  h2.sec .num{ font-size:10pt; color:var(--muted); font-variant-numeric:tabular-nums; font-weight:700; }
+
+  h3{ font-size:11pt; margin:6mm 0 2mm; break-after:avoid; }
+  h4{ font-size:9.6pt; margin:4mm 0 1.5mm; color:var(--ink); break-after:avoid; }
+  p{ margin:0 0 2.6mm; }
+  ul,ol{ margin:0 0 3mm; padding-left:5mm; }
+  li{ margin-bottom:1.2mm; }
+  .lead{ font-size:10.4pt; color:var(--muted); margin-bottom:4mm; }
+
+  /* ---------- Tablas ---------- */
+  table{ width:100%; border-collapse:collapse; margin:2mm 0 4mm; font-size:8.8pt; break-inside:avoid; }
+  thead th{
+    text-align:left; font-size:7.6pt; text-transform:uppercase; letter-spacing:.08em;
+    color:var(--muted); font-weight:700; padding:1.6mm 2mm;
+    border-bottom:1.5px solid var(--ink); background:var(--bg-soft);
+  }
+  tbody td{ padding:1.6mm 2mm; border-bottom:1px solid var(--line-soft); vertical-align:top; }
+  tbody tr:last-child td{ border-bottom:1px solid var(--line); }
+  td.gpio{ font-family:"DejaVu Sans Mono","Liberation Mono",monospace; font-weight:700; white-space:nowrap; }
+  .t-tight td, .t-tight th{ padding:1.2mm 2mm; }
+
+  /* ---------- Callouts ---------- */
+  .box{ border-left:3px solid; padding:2.6mm 3.4mm; margin:3mm 0; break-inside:avoid; border-radius:0 3px 3px 0; }
+  .box p:last-child{ margin-bottom:0; }
+  .box .tag{ display:block; font-size:7.6pt; text-transform:uppercase; letter-spacing:.1em; font-weight:700; margin-bottom:1.2mm; }
+  .warn{ background:var(--warn-bg); border-color:var(--warn-line); } .warn .tag{ color:var(--warn-ink); }
+  .dang{ background:var(--dang-bg); border-color:var(--dang-line); } .dang .tag{ color:var(--dang-ink); }
+  .ok{   background:var(--ok-bg);   border-color:var(--ok-line);   } .ok .tag{ color:var(--ok-ink); }
+  .info{ background:var(--info-bg); border-color:var(--info-line); } .info .tag{ color:var(--info-ink); }
+
+  /* ---------- Figuras ---------- */
+  figure{ margin:4mm 0; break-inside:avoid; }
+  figure svg{ width:100%; height:auto; display:block; }
+  figcaption{ font-size:8pt; color:var(--muted); margin-top:1.8mm; padding-top:1.5mm; border-top:1px solid var(--line-soft); }
+  figcaption b{ color:var(--ink); }
+
+  /* ---------- Utilidades ---------- */
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:0 7mm; }
+  .card{ border:1px solid var(--line); border-radius:4px; padding:3mm 3.4mm; margin:2.5mm 0; break-inside:avoid; }
+  .card h4{ margin-top:0; }
+  .pill{ display:inline-block; font-size:7.4pt; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+         padding:.6mm 1.8mm; border-radius:3px; vertical-align:middle; }
+  .p-33{ background:#e2f3ea; color:var(--v33); }
+  .p-12{ background:#fbe6e6; color:var(--v12); }
+  .p-sig{ background:#e6ecfb; color:var(--sig); }
+  .checklist{ list-style:none; padding-left:0; }
+  .checklist li{ padding-left:6mm; position:relative; margin-bottom:1.6mm; }
+  .checklist li::before{ content:""; position:absolute; left:0; top:.9mm; width:3.2mm; height:3.2mm;
+                         border:1.2px solid var(--muted); border-radius:2px; }
+  .kv{ font-size:8.8pt; }
+  .kv td:first-child{ color:var(--muted); width:44%; }
+  .footnote{ font-size:8pt; color:var(--muted); border-top:1px solid var(--line-soft); padding-top:2mm; margin-top:4mm; }
+</style>
+</head>
+<body>
+
+<!-- ============================ PORTADA ============================ -->
+<div class="cover">
+  <div class="cover-top">
+    <div class="eyebrow">Proyecto Pañol IoT · Documentación de hardware</div>
+    <h1>Nodo Pañol<br>Conexionado, pines y lógica</h1>
+    <div class="rule"></div>
+    <p class="sub">Control de acceso a pañol con RFID, solenoide, reed switch y detector de
+    presencia, sobre ESP32. Documento de referencia para el maquetado y armado del prototipo.</p>
+
+    <div class="cover-meta">
+      <div><dt>Nodo</dt><dd class="mono">panol-lab01-puerta</dd></div>
+      <div><dt>Ubicación</dt><dd class="mono">panol-lab01</dd></div>
+      <div><dt>Microcontrolador</dt><dd>ESP32-WROOM-32 · MicroPython 1.28</dd></div>
+      <div><dt>Estado</dt><dd>Validado sobre hardware real (banco)</dd></div>
+    </div>
+  </div>
+  <div class="cover-foot">
+    Todos los datos de pines y tiempos de este documento están tomados directamente del firmware
+    en producción (<span class="mono">firmware/nodo_panol/config.py</span> y
+    <span class="mono">main.py</span>). Ante cualquier diferencia con documentación anterior,
+    <b>manda el código</b>. Ver §12, «Puntos abiertos».
+  </div>
+</div>
+
+<!-- ============================ 1 ============================ -->
+<section class="page-break">
+<h2 class="sec"><span class="num">01</span> Qué hace el nodo</h2>
+
+<p class="lead">El nodo controla la puerta del pañol: lee una tarjeta RFID, decide localmente si
+está autorizada, pulsa un solenoide para destrabar, y confirma con un reed switch que la puerta
+realmente se abrió. Todo lo que pasa lo reporta a un servidor por WiFi.</p>
+
+<h3>El principio de diseño, en una frase</h3>
+<p><b>La red nunca está en el camino crítico de abrir la puerta.</b> El nodo decide contra una lista
+blanca guardada en su propia flash y <i>después</i> reporta. Si se cae el WiFi, el servidor o la luz
+del edificio, la puerta sigue funcionando para quien tiene tarjeta, y los eventos se guardan en un
+archivo hasta que haya red de nuevo.</p>
+
+<h3>La cadena de responsabilidades</h3>
+<table>
+  <thead><tr><th style="width:22%">Capa</th><th style="width:34%">Mecanismo</th><th>Qué garantiza ante un fallo total</th></tr></thead>
+  <tbody>
+    <tr><td><b>1 · Mecánica</b></td><td>Picaporte interior siempre operativo</td><td>Evacuación siempre posible. No depende de nada eléctrico.</td></tr>
+    <tr><td><b>2 · Eléctrica</b></td><td>Solenoide <i>fail-secure</i> + resistencia de estado seguro en la compuerta</td><td>Sin energía la puerta queda <b>trabada desde afuera</b>, y sin pulsos espurios al arrancar.</td></tr>
+    <tr><td><b>3 · Firmware</b></td><td>FSM volátil + watchdog + cola en flash</td><td>Un reinicio nace en estado seguro; no se pierden eventos de auditoría.</td></tr>
+    <tr><td><b>4 · Servidor</b></td><td>PostgreSQL como única fuente de verdad</td><td>La sesión y las alarmas sobreviven al apagón.</td></tr>
+  </tbody>
+</table>
+
+<div class="box info">
+  <span class="tag">Regla de oro</span>
+  <p>La capa que te salva en un corte de luz debe ser la <b>más tonta</b> (mecánica), no la más lista
+  (software). Si todo se apaga, el sistema falla en el estado seguro por física, no por lógica.</p>
+</div>
+
+<h3>Qué NO hace el nodo</h3>
+<p>No maneja sesiones ni sabe quién está adentro. No interpreta el reed ni el PIR: los reporta como
+eventos sueltos y el servidor decide qué significan. Esa separación es deliberada — si el nodo se
+resetea a mitad de una apertura, el servidor nunca queda con una sesión a medias.</p>
+
+<figure>
+<svg viewBox="0 0 1000 210" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans, Liberation Sans, sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#5d6773"/>
+    </marker>
+  </defs>
+  <!-- sensores -->
+  <rect x="8" y="24" width="150" height="162" rx="6" fill="#f5f7fa" stroke="#d7dde5"/>
+  <text x="83" y="46" text-anchor="middle" font-size="13" font-weight="700" fill="#15181d">Periféricos</text>
+  <text x="83" y="72" text-anchor="middle" font-size="12" fill="#3d4650">RC522 (RFID)</text>
+  <text x="83" y="94" text-anchor="middle" font-size="12" fill="#3d4650">Reed switch</text>
+  <text x="83" y="116" text-anchor="middle" font-size="12" fill="#3d4650">PIR (presencia)</text>
+  <text x="83" y="138" text-anchor="middle" font-size="12" fill="#3d4650">Solenoide 12 V</text>
+  <text x="83" y="160" text-anchor="middle" font-size="12" fill="#3d4650">LEDs + botón</text>
+
+  <path d="M162 105 H 236" stroke="#5d6773" stroke-width="1.6" marker-end="url(#ar)"/>
+
+  <!-- nodo -->
+  <rect x="240" y="24" width="230" height="162" rx="6" fill="#eef3fd" stroke="#3b6fd4" stroke-width="1.6"/>
+  <text x="355" y="50" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1e3f80">ESP32 · Nodo pañol</text>
+  <text x="355" y="76" text-anchor="middle" font-size="11.5" fill="#1e3f80">FSM local (volátil)</text>
+  <text x="355" y="97" text-anchor="middle" font-size="11.5" fill="#1e3f80">Lista blanca en flash</text>
+  <text x="355" y="118" text-anchor="middle" font-size="11.5" fill="#1e3f80">Cola de eventos <tspan font-family="DejaVu Sans Mono, monospace">cola.log</tspan></text>
+  <text x="355" y="139" text-anchor="middle" font-size="11.5" fill="#1e3f80">Watchdog + NTP</text>
+  <text x="355" y="167" text-anchor="middle" font-size="10.5" fill="#5d6773">decide y luego reporta</text>
+
+  <path d="M474 105 H 556" stroke="#5d6773" stroke-width="1.6" marker-end="url(#ar)"/>
+  <text x="515" y="96" text-anchor="middle" font-size="10.5" fill="#5d6773">WiFi</text>
+  <text x="515" y="122" text-anchor="middle" font-size="10.5" fill="#5d6773">HTTPS</text>
+
+  <!-- servidor -->
+  <rect x="560" y="24" width="205" height="162" rx="6" fill="#f5f7fa" stroke="#d7dde5"/>
+  <text x="662" y="50" text-anchor="middle" font-size="13" font-weight="700" fill="#15181d">Servidor</text>
+  <text x="662" y="76" text-anchor="middle" font-size="11.5" fill="#3d4650">FSM de sesiones</text>
+  <text x="662" y="97" text-anchor="middle" font-size="11.5" fill="#3d4650">PostgreSQL</text>
+  <text x="662" y="118" text-anchor="middle" font-size="11.5" fill="#3d4650">Alarmas</text>
+  <text x="662" y="139" text-anchor="middle" font-size="11.5" fill="#3d4650">API + MQTT</text>
+
+  <path d="M769 105 H 845" stroke="#5d6773" stroke-width="1.6" marker-end="url(#ar)"/>
+
+  <rect x="849" y="60" width="143" height="90" rx="6" fill="#f5f7fa" stroke="#d7dde5"/>
+  <text x="920" y="98" text-anchor="middle" font-size="13" font-weight="700" fill="#15181d">EMATP</text>
+  <text x="920" y="120" text-anchor="middle" font-size="11.5" fill="#3d4650">tickets</text>
+</svg>
+<figcaption><b>Figura 1.</b> El nodo es solo el extremo físico del sistema. Este documento cubre
+únicamente la caja azul y sus periféricos.</figcaption>
+</figure>
+</section>
+
+<!-- ============================ 2 ============================ -->
+<section class="page-break">
+<h2 class="sec"><span class="num">02</span> Lista de componentes</h2>
+
+<table>
+  <thead><tr><th style="width:26%">Componente</th><th style="width:22%">Modelo usado</th><th style="width:13%">Alimentación</th><th>Notas para el maquetado</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>Microcontrolador</b></td><td>ESP32-WROOM-32 (devkit)</td><td><span class="pill p-33">5 V USB</span></td>
+      <td><b>WROOM, no WROVER.</b> En el WROVER el GPIO16 lo ocupa la PSRAM y ahí va el PIR.</td>
+    </tr>
+    <tr>
+      <td><b>Lector RFID</b></td><td>MFRC522 (módulo RC522)</td><td><span class="pill p-33">3,3 V</span></td>
+      <td>VCC <b>exclusivamente</b> a 3,3 V. A 5 V se quema el chip. Bus SPI.</td>
+    </tr>
+    <tr>
+      <td><b>Sensor de puerta</b></td><td>Reed switch NA + imán</td><td>—</td>
+      <td>Contacto seco. Sin alimentación: usa el pull-up interno del ESP32.</td>
+    </tr>
+    <tr>
+      <td><b>Detector de presencia</b></td><td>DSC LC-100-PI</td><td><span class="pill p-12">12 V</span></td>
+      <td><b>No es un HC-SR501.</b> Salida por relé de contacto seco N.C. Requiere fuente de 12 V y masa común.</td>
+    </tr>
+    <tr>
+      <td><b>Cerradura</b></td><td>Solenoide <i>fail-secure</i></td><td><span class="pill p-12">12 V</span></td>
+      <td>Energizar-para-abrir. Sin corriente queda trabado, que es lo correcto para acceso controlado.</td>
+    </tr>
+    <tr>
+      <td><b>Driver de potencia</b></td><td>MOSFET N de nivel lógico<br>(p. ej. IRLZ44N / IRL540N)</td><td>—</td>
+      <td><b>De nivel lógico</b> (V<sub>GS(th)</sub> bajo): el ESP32 solo entrega 3,3 V de compuerta. Un IRF540 común no satura.</td>
+    </tr>
+    <tr>
+      <td><b>Protección de bobina</b></td><td>Diodo 1N4007</td><td>—</td>
+      <td><b>Obligatorio</b>, en antiparalelo con la bobina. Sin él, el primer corte destruye el MOSFET.</td>
+    </tr>
+    <tr>
+      <td><b>Resistencias</b></td><td>10 kΩ · 220 Ω · 220–330 Ω ×2</td><td>—</td>
+      <td>Estado seguro de compuerta · resistencia de compuerta · limitadoras de LED.</td>
+    </tr>
+    <tr>
+      <td><b>Indicadores</b></td><td>2 LED (acceso y puerta)</td><td>—</td>
+      <td>El de acceso puede ser el LED integrado de la placa (GPIO2).</td>
+    </tr>
+    <tr>
+      <td><b>Botón</b></td><td>Pulsador NA</td><td>—</td>
+      <td>Alta manual de tarjetas. Con resistencia de <i>pull-down</i>: en reposo tiene que leer 0.</td>
+    </tr>
+    <tr>
+      <td><b>Fuente</b></td><td>Switching 12 V · ≥ 2 A</td><td><span class="pill p-12">12 V</span></td>
+      <td>Alimenta solenoide y PIR. El pico de arranque del solenoide es lo que fija la corriente.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <span class="tag">Sobre el MOSFET</span>
+  <p>El circuito de potencia se puede armar con un <b>módulo de relé</b> en vez de MOSFET, pero
+  entonces hay que revisar la polaridad: la mayoría de los módulos de relé chinos son <b>activo en
+  LOW</b>, mientras que el firmware actual activa en <b>HIGH</b> (ver §6.4 y §12). Con MOSFET N en
+  configuración <i>low-side</i> —lo que asume este documento— activo en HIGH es lo natural.</p>
+</div>
+</section>
+
+<!-- ============================ 3 ============================ -->
+<section class="page-break">
+<h2 class="sec"><span class="num">03</span> Mapa de pines</h2>
+
+<p class="lead">Ésta es la tabla autoritativa. Sale de
+<span class="mono">firmware/nodo_panol/config.py</span>. Cualquier otro mapa de pines que circule
+está desactualizado.</p>
+
+<table>
+  <thead>
+    <tr><th style="width:24%">Función</th><th style="width:9%">GPIO</th><th style="width:20%">Modo</th><th>Detalle</th></tr>
+  </thead>
+  <tbody>
+    <tr><td colspan="4" style="background:var(--bg-soft); font-weight:700; font-size:8.2pt; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); border-bottom:1px solid var(--line);">Lector RFID — MFRC522 (SPI2 / VSPI)</td></tr>
+    <tr><td>RC522 · SCK</td><td class="gpio">GPIO18</td><td>SPI CLK</td><td>Reloj del bus.</td></tr>
+    <tr><td>RC522 · MOSI</td><td class="gpio">GPIO23</td><td>SPI MOSI</td><td>ESP32 → RC522.</td></tr>
+    <tr><td>RC522 · MISO</td><td class="gpio">GPIO19</td><td>SPI MISO</td><td>RC522 → ESP32. Si este cable falla, el lector «no responde».</td></tr>
+    <tr><td>RC522 · RST</td><td class="gpio">GPIO4</td><td>Salida</td><td><b>Obligatorio cablearlo.</b> El driver hace un reset por hardware; sin este pin el chip queda dormido.</td></tr>
+    <tr><td>RC522 · SDA / CS</td><td class="gpio">GPIO5</td><td>Salida</td><td>Chip select, activo en LOW.</td></tr>
+    <tr><td>RC522 · IRQ</td><td class="gpio" style="color:var(--muted)">—</td><td>—</td><td><b>No se cablea.</b> El driver funciona por sondeo.</td></tr>
+
+    <tr><td colspan="4" style="background:var(--bg-soft); font-weight:700; font-size:8.2pt; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); border-bottom:1px solid var(--line);">Actuador</td></tr>
+    <tr><td>Compuerta del MOSFET<br>(solenoide)</td><td class="gpio">GPIO15</td><td>Salida</td><td><b>Pin de strapping.</b> Requiere resistencia externa de estado seguro. Pulso de 800 ms. Ver §6.4.</td></tr>
+
+    <tr><td colspan="4" style="background:var(--bg-soft); font-weight:700; font-size:8.2pt; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); border-bottom:1px solid var(--line);">Sensores</td></tr>
+    <tr><td>Reed switch</td><td class="gpio">GPIO27</td><td>Entrada + PULL_UP interno</td><td>Una pata al pin, la otra a GND. <b>0 = cerrada · 1 = abierta.</b></td></tr>
+    <tr><td>PIR (contacto seco N.C.)</td><td class="gpio">GPIO16</td><td>Entrada + PULL_UP interno</td><td>C → GND, NC → este pin. <b>0 = reposo · 1 = movimiento.</b></td></tr>
+
+    <tr><td colspan="4" style="background:var(--bg-soft); font-weight:700; font-size:8.2pt; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); border-bottom:1px solid var(--line);">Interfaz de usuario</td></tr>
+    <tr><td>LED de acceso</td><td class="gpio">GPIO2</td><td>Salida</td><td>LED integrado de la placa. Encendido mientras dura la ventana de apertura. Pin de strapping.</td></tr>
+    <tr><td>LED de puerta</td><td class="gpio">GPIO33</td><td>Salida</td><td>Encendido = puerta abierta (espejo del reed).</td></tr>
+    <tr><td>Botón «grabar tarjeta»</td><td class="gpio">GPIO32</td><td>Entrada + PULL_DOWN interno</td><td>En reposo <b>tiene que leer 0</b>. Si al arrancar lee 1, el firmware desactiva la función.</td></tr>
+  </tbody>
+</table>
+
+<div class="box dang">
+  <span class="tag">Corrección respecto de documentación previa</span>
+  <p>El <span class="mono">README.md</span> del repositorio todavía dice <b>GPIO26</b> para el
+  solenoide y <b>HC-SR501</b> para el PIR. Ambos datos son viejos: el pin se movió a <b>GPIO15</b> y
+  el sensor real es un <b>DSC LC-100-PI</b> de contacto seco. Usar esta tabla, no la del README.</p>
+</div>
+</section>
+
+<!-- ============================ 4 ============================ -->
+<section class="page-break">
+<h2 class="sec"><span class="num">04</span> Diagrama de conexionado</h2>
+
+<figure>
+<svg viewBox="0 0 1000 660" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans, Liberation Sans, sans-serif">
+  <defs>
+    <marker id="dot" viewBox="0 0 6 6" refX="3" refY="3" markerWidth="5" markerHeight="5">
+      <circle cx="3" cy="3" r="2.6" fill="#1d4ed8"/>
+    </marker>
+  </defs>
+
+  <!-- ===== ESP32 ===== -->
+  <rect x="368" y="60" width="264" height="470" rx="8" fill="#eef3fd" stroke="#3b6fd4" stroke-width="2"/>
+  <rect x="368" y="60" width="264" height="42" rx="8" fill="#3b6fd4"/>
+  <rect x="368" y="88" width="264" height="14" fill="#3b6fd4"/>
+  <text x="500" y="88" text-anchor="middle" font-size="16" font-weight="700" fill="#ffffff">ESP32-WROOM-32</text>
+  <text x="500" y="524" text-anchor="middle" font-size="11" fill="#5d6773">MicroPython · 160 MHz</text>
+
+  <!-- pines izquierda -->
+  <g font-size="12.5" font-weight="700" fill="#1d4ed8" font-family="DejaVu Sans Mono, monospace">
+    <text x="384" y="152">18 · 23 · 19</text>
+    <text x="384" y="196">4 · 5</text>
+    <text x="384" y="286">27</text>
+    <text x="384" y="376">16</text>
+  </g>
+  <!-- pines derecha -->
+  <g font-size="12.5" font-weight="700" fill="#1d4ed8" font-family="DejaVu Sans Mono, monospace" text-anchor="end">
+    <text x="616" y="152">15</text>
+    <text x="616" y="286">2</text>
+    <text x="616" y="322">33</text>
+    <text x="616" y="430">32</text>
+  </g>
+  <!-- pines abajo (alimentación) -->
+  <g font-size="12.5" font-weight="700" font-family="DejaVu Sans Mono, monospace" text-anchor="middle">
+    <text x="428" y="500" fill="#0f8a4d">3V3</text>
+    <text x="500" y="500" fill="#4b5563">GND</text>
+    <text x="572" y="500" fill="#4b5563">5V/USB</text>
+  </g>
+
+  <!-- ===== RC522 ===== -->
+  <rect x="30" y="98" width="248" height="112" rx="6" fill="#ffffff" stroke="#d7dde5" stroke-width="1.4"/>
+  <text x="46" y="122" font-size="14" font-weight="700" fill="#15181d">MFRC522 · RFID</text>
+  <text x="46" y="146" font-size="11.5" fill="#3d4650">SCK · MOSI · MISO</text>
+  <text x="46" y="167" font-size="11.5" fill="#3d4650">RST · SDA(CS)</text>
+  <text x="46" y="190" font-size="11.5" font-weight="700" fill="#0f8a4d">VCC = 3,3 V · IRQ sin usar</text>
+  <path d="M278 146 H 368" stroke="#1d4ed8" stroke-width="2.4"/>
+  <path d="M278 167 L 320 167 L 320 190 L 368 190" stroke="#1d4ed8" stroke-width="2.4" fill="none"/>
+
+  <!-- ===== REED ===== -->
+  <rect x="30" y="248" width="248" height="76" rx="6" fill="#ffffff" stroke="#d7dde5" stroke-width="1.4"/>
+  <text x="46" y="272" font-size="14" font-weight="700" fill="#15181d">Reed switch + imán</text>
+  <text x="46" y="294" font-size="11.5" fill="#3d4650">contacto seco · sin alimentación</text>
+  <text x="46" y="314" font-size="11.5" font-weight="700" fill="#4b5563">otra pata → GND</text>
+  <path d="M278 286 H 368" stroke="#1d4ed8" stroke-width="2.4"/>
+
+  <!-- ===== PIR ===== -->
+  <rect x="30" y="344" width="248" height="96" rx="6" fill="#ffffff" stroke="#d7dde5" stroke-width="1.4"/>
+  <text x="46" y="368" font-size="14" font-weight="700" fill="#15181d">PIR DSC LC-100-PI</text>
+  <text x="46" y="390" font-size="11.5" fill="#3d4650">NC → GPIO16 · C → GND</text>
+  <text x="46" y="411" font-size="11.5" font-weight="700" fill="#c62828">+12 V de la fuente</text>
+  <text x="46" y="431" font-size="11.5" font-weight="700" fill="#4b5563">masa común obligatoria</text>
+  <path d="M278 376 H 368" stroke="#1d4ed8" stroke-width="2.4"/>
+
+  <!-- ===== MOSFET + SOLENOIDE ===== -->
+  <rect x="722" y="98" width="248" height="128" rx="6" fill="#ffffff" stroke="#c62828" stroke-width="1.6"/>
+  <text x="738" y="122" font-size="14" font-weight="700" fill="#15181d">Etapa de potencia</text>
+  <text x="738" y="145" font-size="11.5" fill="#3d4650">MOSFET N nivel lógico</text>
+  <text x="738" y="166" font-size="11.5" fill="#3d4650">+ 1N4007 antiparalelo</text>
+  <text x="738" y="187" font-size="11.5" fill="#3d4650">+ 10 kΩ a GND en compuerta</text>
+  <text x="738" y="210" font-size="11.5" font-weight="700" fill="#c62828">Solenoide 12 V (detalle §6.4)</text>
+  <path d="M632 152 H 722" stroke="#1d4ed8" stroke-width="2.4"/>
+
+  <!-- ===== LEDs ===== -->
+  <rect x="722" y="256" width="248" height="94" rx="6" fill="#ffffff" stroke="#d7dde5" stroke-width="1.4"/>
+  <text x="738" y="280" font-size="14" font-weight="700" fill="#15181d">Indicadores</text>
+  <text x="738" y="302" font-size="11.5" fill="#3d4650">LED acceso (integrado)</text>
+  <text x="738" y="323" font-size="11.5" fill="#3d4650">LED puerta + 220–330 Ω</text>
+  <text x="738" y="343" font-size="11.5" font-weight="700" fill="#4b5563">cátodos → GND</text>
+  <path d="M632 286 H 722" stroke="#1d4ed8" stroke-width="2.4"/>
+  <path d="M632 322 L 690 322 L 690 300 L 722 300" stroke="#1d4ed8" stroke-width="2.4" fill="none"/>
+
+  <!-- ===== BOTÓN ===== -->
+  <rect x="722" y="392" width="248" height="76" rx="6" fill="#ffffff" stroke="#d7dde5" stroke-width="1.4"/>
+  <text x="738" y="416" font-size="14" font-weight="700" fill="#15181d">Botón «grabar»</text>
+  <text x="738" y="438" font-size="11.5" fill="#3d4650">pulsador NA → 3,3 V</text>
+  <text x="738" y="458" font-size="11.5" font-weight="700" fill="#4b5563">pull-down (reposo = 0)</text>
+  <path d="M632 430 H 722" stroke="#1d4ed8" stroke-width="2.4"/>
+
+  <!-- ===== ALIMENTACIÓN ===== -->
+  <rect x="30" y="560" width="440" height="76" rx="6" fill="#fdecec" stroke="#c62828" stroke-width="1.6"/>
+  <text x="46" y="586" font-size="14" font-weight="700" fill="#8a1c1c">Fuente switching 12 V · ≥ 2 A</text>
+  <text x="46" y="608" font-size="11.5" fill="#8a1c1c">alimenta SOLENOIDE y PIR</text>
+  <text x="46" y="628" font-size="11.5" font-weight="700" fill="#8a1c1c">su GND va unido al GND del ESP32</text>
+
+  <rect x="530" y="560" width="440" height="76" rx="6" fill="#edf7f0" stroke="#2e9e5b" stroke-width="1.6"/>
+  <text x="546" y="586" font-size="14" font-weight="700" fill="#1c5e37">3,3 V del regulador del ESP32</text>
+  <text x="546" y="608" font-size="11.5" fill="#1c5e37">alimenta SOLO el RC522</text>
+  <text x="546" y="628" font-size="11.5" font-weight="700" fill="#1c5e37">nunca 5 V al RC522</text>
+
+  <path d="M428 512 L 428 542 L 700 542 L 700 560" stroke="#0f8a4d" stroke-width="2.4" fill="none"/>
+  <path d="M500 512 L 500 546" stroke="#4b5563" stroke-width="2.4"/>
+  <path d="M500 546 L 250 546 L 250 560" stroke="#4b5563" stroke-width="2.4" fill="none" stroke-dasharray="7 4"/>
+  <text x="330" y="540" font-size="11" font-weight="700" fill="#4b5563">MASA COMÚN</text>
+</svg>
+<figcaption><b>Figura 2.</b> Conexionado general. Las líneas azules son señal lógica a 3,3 V; la
+línea punteada gris es la masa común entre la fuente de 12 V y el ESP32, que es obligatoria para que
+el PIR y el MOSFET funcionen. La etapa de potencia se detalla en la figura 3.</figcaption>
+</figure>
+
+<div class="box dang">
+  <span class="tag">Los tres errores que matan la placa</span>
+  <p><b>1.</b> RC522 alimentado a 5 V → se quema el chip, sin vuelta atrás.<br>
+     <b>2.</b> Solenoide sin diodo 1N4007 → el primer corte de la bobina destruye el MOSFET.<br>
+     <b>3.</b> Masa de los 12 V no unida a la del ESP32 → el PIR y el MOSFET no conmutan, o conmutan
+     de manera errática, y se pierde tiempo buscando el problema en el software.</p>
+</div>
+</section>
+
+<!-- ============================ 5 ============================ -->
+<section class="page-break">
+<h2 class="sec"><span class="num">05</span> Alimentación y masas</h2>
+
+<p class="lead">Hay tres tensiones en juego y una sola masa. Confundirlas es la fuente más común de
+fallos intermitentes.</p>
+
+<table>
+  <thead><tr><th style="width:16%">Riel</th><th style="width:26%">Origen</th><th style="width:28%">Alimenta</th><th>Cuidados</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="pill p-12">12 V</span></td>
+      <td>Fuente switching externa (≥ 2 A)</td>
+      <td>Solenoide · PIR DSC</td>
+      <td>Nunca toca un GPIO. El pico de arranque del solenoide es lo que fija el amperaje de la fuente.</td>
+    </tr>
+    <tr>
+      <td><span class="pill p-33">5 V</span></td>
+      <td>USB o pin VIN del devkit</td>
+      <td>Solo el propio ESP32</td>
+      <td>No alimentar el RC522 desde acá.</td>
+    </tr>
+    <tr>
+      <td><span class="pill p-33">3,3 V</span></td>
+      <td>Regulador de la placa ESP32</td>
+      <td>RC522 · pull-ups · botón</td>
+      <td>El regulador del devkit entrega poco (≈ 500 mA). Con el RC522 alcanza sobrado.</td>
+    </tr>
+    <tr>
+      <td><span class="pill" style="background:#e9edf1;color:var(--gnd)">GND</span></td>
+      <td>Único, compartido</td>
+      <td>Todo</td>
+      <td><b>Obligatorio:</b> el negativo de los 12 V debe unirse al GND del ESP32.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <span class="tag">Por qué la masa común no es opcional</span>
+  <p>El PIR conmuta un <b>contacto seco</b> y el MOSFET compara su tensión de compuerta <b>contra su
+  fuente (source)</b>. Si las masas están separadas, no existe una referencia común: el ESP32 «ve»
+  un potencial flotante en vez de un 0 firme. El síntoma típico son lecturas erráticas del PIR o un
+  solenoide que a veces dispara y a veces no. Se verificó en el banco que, con la masa bien unida,
+  el PIR entrega pulsos limpios de ~1,7 s sin rebotes.</p>
+</div>
+
+<h3>Consumo y dimensionamiento</h3>
+<p>El solenoide es la única carga significativa, y trabaja por <b>pulsos de 800 ms</b>, no de forma
+continua. Aun así conviene dimensionar la fuente por el pico de arranque y no por el promedio: un
+solenoide típico de 12 V pide entre 0,5 A y 1,5 A durante ese pulso. Con 2 A hay margen para el PIR
+(consumo despreciable) y para que la tensión no se hunda y reinicie el ESP32.</p>
+
+<div class="box info">
+  <span class="tag">Sugerencia para el maquetado</span>
+  <p>Si en la maqueta el ESP32 se reinicia justo cuando dispara el solenoide, casi seguro es una
+  caída de tensión por la fuente o por cables finos, no un bug del firmware. Un capacitor
+  electrolítico de 470–1000 µF en el riel de 12 V, cerca del solenoide, suele resolverlo.</p>
+</div>
+</section>
+
+<!-- ============================ 6 ============================ -->
+<section class="page-break">
+<h2 class="sec"><span class="num">06</span> Los subsistemas, uno por uno</h2>
+
+<h3>6.1 · Lector RFID MFRC522</h3>
+<table class="t-tight kv">
+  <tbody>
+    <tr><td>Bus</td><td>SPI de hardware (SPI2 / VSPI) a 1 MHz, modo 0 (polaridad 0, fase 0)</td></tr>
+    <tr><td>Pines</td><td class="mono">SCK 18 · MOSI 23 · MISO 19 · RST 4 · SDA/CS 5</td></tr>
+    <tr><td>Alimentación</td><td><b>3,3 V exclusivamente</b></td></tr>
+    <tr><td>Registro de versión</td><td>reg. <span class="mono">0x37</span> debe leer <span class="mono">0x91</span> o <span class="mono">0x92</span></td></tr>
+    <tr><td>UID leído</td><td>4 bytes, formateados como <span class="mono">DE:AD:BE:EF</span></td></tr>
+  </tbody>
+</table>
+
+<p>Al arrancar, el firmware reintenta la verificación del lector durante <b>20 segundos</b>, a
+propósito: da tiempo a acomodar los cables sin tener que resetear la placa.</p>
+
+<div class="box warn">
+  <span class="tag">Diagnóstico del RC522 — lo que ya nos pasó</span>
+  <p>Si el registro <span class="mono">0x37</span> lee <span class="mono">0x00</span> o
+  <span class="mono">0xFF</span>, el lector no está hablando. Las dos causas reales que encontramos:</p>
+  <ul style="margin-top:1.5mm">
+    <li><b>MISO mal cableado.</b> Es el único cable que va del módulo hacia el ESP32; si está flojo,
+    el ESP32 escribe bien pero nunca recibe respuesta.</li>
+    <li><b>RST sin cablear.</b> El driver hace un reset por hardware bajando y subiendo RST. Sin ese
+    pin conectado a un GPIO, el chip queda dormido y devuelve <span class="mono">0x00</span>
+    para siempre. No alcanza con atarlo a 3,3 V.</li>
+  </ul>
+</div>
+
+<h3>6.2 · Reed switch (estado de la puerta)</h3>
+<p>Un reed switch normalmente abierto con su imán en la hoja de la puerta. Una pata al
+<span class="mono">GPIO27</span>, la otra a GND. No lleva alimentación ni resistencia externa: el
+firmware activa el <b>pull-up interno</b> del ESP32.</p>
+
+<table class="t-tight">
+  <thead><tr><th style="width:26%">Estado físico</th><th style="width:26%">Contacto</th><th style="width:22%">Lectura del GPIO</th><th>Reporte</th></tr></thead>
+  <tbody>
+    <tr><td>Puerta <b>cerrada</b></td><td>imán cerca → cerrado</td><td class="mono"><b>0</b></td><td><span class="mono">estado_reed = CERRADO</span></td></tr>
+    <tr><td>Puerta <b>abierta</b></td><td>imán lejos → abierto</td><td class="mono"><b>1</b></td><td><span class="mono">estado_reed = ABIERTO</span></td></tr>
+  </tbody>
+</table>
+
+<p>El firmware aplica un <b>antirrebote de 300 ms</b>: tiene que leer el mismo valor de forma
+sostenida antes de reportar un cambio. Sin eso, el golpe del cierre genera una ráfaga de eventos
+falsos.</p>
+
+<div class="box dang">
+  <span class="tag">No usar GPIO12 para el reed</span>
+  <p>Se probó y hay que evitarlo: GPIO12 es un pin de <i>strapping</i> (MTDI) que <b>debe estar en
+  LOW al arrancar</b>. Si el reed lo deja en alto durante el reset, la placa entra en bucle de
+  arranque con el error <span class="mono">invalid header: 0xffffffff</span>. GPIO27 está verificado
+  y funcionando.</p>
+</div>
+
+<h3>6.3 · Detector de presencia DSC LC-100-PI</h3>
+<p><b>No es un HC-SR501.</b> Es un PIR de alarma profesional cuya salida es un <b>relé de contacto
+seco normalmente cerrado</b>, y necesita alimentación de 12 V propia.</p>
+
+<table class="t-tight kv">
+  <tbody>
+    <tr><td>Alimentación</td><td>12 V de la fuente switching (mismo riel que el solenoide)</td></tr>
+    <tr><td>Salida</td><td>Contacto seco N.C. — terminales <b>C</b> y <b>NC</b></td></tr>
+    <tr><td>Cableado</td><td><span class="mono">C → GND</span> · <span class="mono">NC → GPIO16</span></td></tr>
+    <tr><td>Modo del GPIO</td><td>Entrada con <b>PULL_UP interno</b> (obligatorio)</td></tr>
+    <tr><td>Calentamiento</td><td>≈ 60 s desde que se energiza, antes de detectar bien</td></tr>
+    <tr><td>Duración del pulso</td><td>≈ 1,7 s (tiempo de retención del relé interno)</td></tr>
+  </tbody>
+</table>
+
+<table class="t-tight">
+  <thead><tr><th style="width:30%">Situación</th><th style="width:34%">Contacto N.C.</th><th>Lectura del GPIO16</th></tr></thead>
+  <tbody>
+    <tr><td>Reposo (sin movimiento)</td><td>cerrado → el pin queda atado a GND</td><td class="mono"><b>0</b></td></tr>
+    <tr><td>Detección</td><td>abre → manda el pull-up interno</td><td class="mono"><b>1</b></td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <span class="tag">Dos cosas que cuestan tiempo si no se saben</span>
+  <p><b>El PULL_UP es obligatorio.</b> Sin él, al abrir el contacto la línea queda flotando y el «1»
+  no es firme: se leen detecciones fantasma. Con pull-up, verificado en banco, los pulsos salen
+  limpios.</p>
+  <p><b>La sensibilidad se ajusta con el jumper de <i>pulse count</i></b> (ponerlo en 2 para menos
+  falsos positivos), <b>no con los trimpots</b> de la placa: esos son calibración de fábrica y
+  moverlos descalibra el sensor.</p>
+</div>
+
+<p>El firmware limita los reportes a uno cada <b>30 segundos</b> (<i>throttle</i>). El nodo solo
+avisa que hubo movimiento; cuánto tiempo hace falta sin movimiento para cerrar una sesión lo decide
+el servidor.</p>
+
+<div class="box info">
+  <span class="tag">GPIO16 y la elección del módulo</span>
+  <p>El GPIO16 solo está libre en el <b>ESP32-WROOM</b>. En el <b>WROVER</b> lo usa la PSRAM interna
+  y el PIR no funciona. Si en el maquetado se usa otra placa, hay que reubicar este pin en
+  <span class="mono">config.py</span>.</p>
+</div>
+
+<h3 class="page-break">6.4 · Solenoide y etapa de potencia</h3>
+
+<p>Es la parte del circuito donde un error se paga con componentes quemados. El solenoide es
+<b>fail-secure</b>: se energiza para <i>abrir</i>. Sin corriente queda trabado, que es exactamente
+el comportamiento deseado en un control de acceso.</p>
+
+<table class="t-tight">
+  <thead><tr><th style="width:30%">Situación</th><th style="width:24%">GPIO15</th><th>Solenoide</th></tr></thead>
+  <tbody>
+    <tr><td><b>Reposo</b> (la mayor parte del tiempo)</td><td class="mono"><b>0 · LOW</b></td><td>Des-energizado → puerta <b>trabada</b></td></tr>
+    <tr><td><b>Pulso de apertura</b> (800 ms)</td><td class="mono"><b>1 · HIGH</b></td><td>Energizado → puerta <b>destrabada</b></td></tr>
+  </tbody>
+</table>
+<p style="font-size:8.6pt; color:var(--muted); margin-top:-1mm">Es lo que hace el firmware hoy, y es
+coherente con un MOSFET N en <i>low-side</i>. Ver §12: hay un comentario en el código que dice lo
+contrario y está pendiente de corregir.</p>
+
+<figure>
+<svg viewBox="0 0 900 460" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans, Liberation Sans, sans-serif">
+  <!-- riel +12V -->
+  <path d="M100 50 H 850" stroke="#c62828" stroke-width="3"/>
+  <text x="100" y="36" font-size="15" font-weight="700" fill="#c62828">+12 V</text>
+  <circle cx="100" cy="50" r="5" fill="#c62828"/>
+
+  <!-- riel GND -->
+  <path d="M100 410 H 850" stroke="#4b5563" stroke-width="3"/>
+  <text x="100" y="436" font-size="15" font-weight="700" fill="#4b5563">GND (común con el ESP32)</text>
+  <circle cx="100" cy="410" r="5" fill="#4b5563"/>
+
+  <!-- solenoide -->
+  <path d="M560 50 V 110" stroke="#15181d" stroke-width="2.2"/>
+  <rect x="536" y="110" width="48" height="86" rx="4" fill="#ffffff" stroke="#15181d" stroke-width="2.2"/>
+  <path d="M544 126 H 576 M544 142 H 576 M544 158 H 576 M544 174 H 576" stroke="#15181d" stroke-width="1.6"/>
+  <path d="M560 196 V 276" stroke="#15181d" stroke-width="2.2"/>
+  <text x="520" y="146" text-anchor="end" font-size="14" font-weight="700" fill="#15181d">SOLENOIDE</text>
+  <text x="520" y="167" text-anchor="end" font-size="12.5" fill="#3d4650">12 V · fail-secure</text>
+
+  <!-- diodo 1N4007 en antiparalelo, cátodo hacia +12 V -->
+  <path d="M700 50 V 120" stroke="#c62828" stroke-width="2.2"/>
+  <path d="M678 120 H 722" stroke="#c62828" stroke-width="3.6"/>
+  <path d="M678 160 L 722 160 L 700 124 Z" fill="#c62828"/>
+  <path d="M700 160 V 246 H 560" stroke="#c62828" stroke-width="2.2" fill="none"/>
+  <circle cx="560" cy="246" r="4.5" fill="#c62828"/>
+  <text x="738" y="132" font-size="14" font-weight="700" fill="#c62828">1N4007</text>
+  <text x="738" y="152" font-size="12" fill="#8a1c1c">banda (cátodo)</text>
+  <text x="738" y="170" font-size="12" fill="#8a1c1c">hacia +12 V</text>
+
+  <!-- MOSFET: canal, compuerta, drain, source -->
+  <path d="M430 262 V 330" stroke="#15181d" stroke-width="3.4"/>
+  <path d="M410 266 V 326" stroke="#15181d" stroke-width="2.6"/>
+  <path d="M430 276 H 560" stroke="#15181d" stroke-width="2.2" fill="none"/>
+  <path d="M430 316 H 560" stroke="#15181d" stroke-width="2.2" fill="none"/>
+  <path d="M560 316 V 410" stroke="#15181d" stroke-width="2.2" fill="none"/>
+  <circle cx="560" cy="410" r="4.5" fill="#4b5563"/>
+  <text x="444" y="270" font-size="11.5" fill="#5d6773">D</text>
+  <text x="444" y="338" font-size="11.5" fill="#5d6773">S</text>
+  <text x="392" y="288" font-size="11.5" fill="#5d6773">G</text>
+  <text x="600" y="346" font-size="14" font-weight="700" fill="#15181d">MOSFET N</text>
+  <text x="600" y="366" font-size="12.5" fill="#3d4650">nivel lógico (IRLZ44N)</text>
+
+  <!-- compuerta: ESP32 -> 220 -> nodo -> placa -->
+  <rect x="30" y="272" width="140" height="48" rx="5" fill="#eef3fd" stroke="#3b6fd4" stroke-width="1.8"/>
+  <text x="100" y="294" text-anchor="middle" font-size="14" font-weight="700" fill="#1e3f80">ESP32</text>
+  <text x="100" y="312" text-anchor="middle" font-size="13" font-weight="700" fill="#1d4ed8" font-family="DejaVu Sans Mono, monospace">GPIO15</text>
+  <path d="M170 296 H 232" stroke="#1d4ed8" stroke-width="2.4"/>
+  <rect x="232" y="284" width="56" height="24" rx="3" fill="#ffffff" stroke="#1d4ed8" stroke-width="2"/>
+  <text x="260" y="274" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1d4ed8">220 Ω</text>
+  <path d="M288 296 H 410" stroke="#1d4ed8" stroke-width="2.4"/>
+  <circle cx="350" cy="296" r="4.5" fill="#1d4ed8"/>
+
+  <!-- pull-down 10k -->
+  <path d="M350 296 V 340" stroke="#1d4ed8" stroke-width="2.4"/>
+  <rect x="324" y="340" width="52" height="24" rx="3" fill="#ffffff" stroke="#1d4ed8" stroke-width="2"/>
+  <text x="350" y="357" text-anchor="middle" font-size="12" font-weight="700" fill="#1d4ed8">10 k</text>
+  <path d="M350 364 V 410" stroke="#1d4ed8" stroke-width="2.4"/>
+  <circle cx="350" cy="410" r="4.5" fill="#4b5563"/>
+  <text x="96" y="352" font-size="11.5" font-weight="700" fill="#1d4ed8">pull-DOWN de estado seguro</text>
+  <text x="96" y="370" font-size="11" fill="#5d6773">mantiene el solenoide trabado</text>
+  <text x="96" y="386" font-size="11" fill="#5d6773">mientras el ESP32 arranca</text>
+</svg>
+<figcaption><b>Figura 3.</b> Etapa de potencia del solenoide. Tres elementos son obligatorios y
+ninguno es opcional: el <b>diodo 1N4007</b> en antiparalelo con la bobina (banda hacia +12 V), la
+resistencia de <b>10 kΩ a GND</b> en la compuerta, y la <b>masa común</b> entre los 12 V y el
+ESP32.</figcaption>
+</figure>
+
+<h4>Por qué cada componente está ahí</h4>
+<table class="t-tight">
+  <thead><tr><th style="width:24%">Componente</th><th>Función</th></tr></thead>
+  <tbody>
+    <tr><td><b>Diodo 1N4007</b><br>antiparalelo</td><td>Al cortar la corriente, la bobina genera un pico inverso de cientos de voltios. El diodo le da un camino para disiparse. <b>Sin él, el primer pulso puede destruir el MOSFET.</b> La banda del diodo (cátodo) va hacia +12 V.</td></tr>
+    <tr><td><b>10 kΩ a GND</b><br>en la compuerta</td><td>Mantiene el MOSFET cortado mientras el ESP32 arranca o se resetea, cuando el GPIO todavía está flotando y no corre una sola línea de código. Es la garantía por <i>hardware</i> de que no hay pulsos espurios.</td></tr>
+    <tr><td><b>220 Ω</b><br>en serie a la compuerta</td><td>Limita el pico de corriente que el GPIO entrega a la capacidad de compuerta al conmutar. Protege el pin del ESP32.</td></tr>
+    <tr><td><b>MOSFET de nivel lógico</b></td><td>El ESP32 entrega 3,3 V. Un MOSFET estándar (IRF540) necesita ~10 V para saturar: con 3,3 V queda a medio conducir, se calienta y el solenoide no tira. Hay que usar uno de nivel lógico.</td></tr>
+  </tbody>
+</table>
+
+<h4>GPIO15: un pin de strapping, y qué implica</h4>
+<p>El GPIO15 es <b>MTDO</b>, uno de los pines de <i>strapping</i> del ESP32: tiene un pull-up interno
+y <b>arranca en ALTO</b> durante el reset, antes de que corra código. Como el firmware energiza el
+solenoide con nivel ALTO, ese estado inicial <b>no es seguro por sí solo</b>: por eso la resistencia
+externa de <b>10 kΩ a GND</b> no es un adorno, es la que gana contra el pull-up interno (~45 kΩ) y
+deja la compuerta por debajo del umbral de conducción durante el arranque.</p>
+
+<div class="box dang">
+  <span class="tag">Verificar en la maqueta antes de conectar el solenoide</span>
+  <p>Antes de cablear la bobina, medir con el téster la tensión en la compuerta del MOSFET durante un
+  reset de la placa. <b>Tiene que quedar por debajo de ~1 V.</b> Si sube a 3,3 V al arrancar, falta
+  la resistencia de 10 kΩ o está mal puesta, y el solenoide va a dispararse en cada reinicio.</p>
+</div>
+
+</section>
+
+<!-- ============================ 7 ============================ -->
+<section class="page-break">
+<h2 class="sec"><span class="num">07</span> Reglas de uso de los GPIO</h2>
+
+<p class="lead">Media docena de reglas del ESP32 que, si no se conocen, producen fallos que parecen
+bugs de software y no lo son. Vale la pena leerlas antes de reubicar cualquier pin en la maqueta.</p>
+
+<table>
+  <thead><tr><th style="width:22%">Pines</th><th style="width:22%">Restricción</th><th>Qué pasa si se ignora</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="gpio" style="color:var(--v12)">GPIO6–11</td>
+      <td><b>Prohibidos</b></td>
+      <td>Están conectados a la memoria flash SPI del módulo. Usarlos cuelga la placa de forma irrecuperable.</td>
+    </tr>
+    <tr>
+      <td class="gpio">GPIO34–39</td>
+      <td>Solo entrada</td>
+      <td>No pueden ser salida y <b>no tienen pull-up/pull-down internos</b>. Para el reed o el PIR habría que agregar resistencias externas.</td>
+    </tr>
+    <tr>
+      <td class="gpio" style="color:var(--v12)">GPIO12</td>
+      <td>Strapping (MTDI)<br>debe estar en LOW al arrancar</td>
+      <td>Bucle de arranque con <span class="mono">invalid header: 0xffffffff</span>. Ya nos pasó con el reed acá.</td>
+    </tr>
+    <tr>
+      <td class="gpio">GPIO15</td>
+      <td>Strapping (MTDO)<br>arranca en ALTO</td>
+      <td>Cualquier carga conectada recibe un pulso durante el arranque. Por eso lleva la resistencia de 10 kΩ a GND (§6.4).</td>
+    </tr>
+    <tr>
+      <td class="gpio">GPIO0 · GPIO2</td>
+      <td>Strapping (modo de arranque)</td>
+      <td>Si algo los fuerza a un nivel raro durante el reset, la placa entra en modo de descarga y no arranca el firmware. GPIO2 lleva el LED integrado, que es carga liviana y no molesta.</td>
+    </tr>
+    <tr>
+      <td class="gpio">GPIO5</td>
+      <td>Strapping (idle en alto)</td>
+      <td>Sale en alto al arrancar. Para un <i>chip select</i> activo en LOW —que es nuestro caso— eso es justo lo que se quiere: el RC522 arranca deseleccionado.</td>
+    </tr>
+    <tr>
+      <td class="gpio">GPIO16 · GPIO17</td>
+      <td>Ocupados en WROVER</td>
+      <td>Los usa la PSRAM. El PIR (GPIO16) no funciona si se maqueta con un WROVER en vez de un WROOM.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Corriente por pin</h3>
+<p>Cada GPIO del ESP32 entrega cómodamente hasta <b>12 mA</b> (el máximo absoluto es 40 mA, pero no
+conviene acercarse). Los LEDs van con resistencia de 220–330 Ω, lo que da unos 5–7 mA: sobrado para
+verlos y muy lejos del límite. <b>Ninguna carga de potencia se conecta directamente a un GPIO</b> —
+para eso está el MOSFET.</p>
+
+<h3>Si hace falta mover un pin</h3>
+<p>Todo el mapa vive en un solo archivo, <span class="mono">firmware/nodo_panol/config.py</span>. No
+hay números de pin dispersos por el código. Cambiar un pin es editar una línea de ese archivo y
+volver a cargar el firmware; no hay que tocar la lógica.</p>
+
+<div class="box info">
+  <span class="tag">Probar de a un sensor por vez</span>
+  <p>El mismo archivo tiene un diccionario <span class="mono">SENSORES</span> con tres banderas
+  (<span class="mono">rfid</span>, <span class="mono">reed</span>, <span class="mono">pir</span>). Un
+  sensor puesto en <span class="mono">False</span> ni siquiera se instancia: no se lee, no reporta y
+  no ensucia la consola. Es la forma prevista de ir armando la maqueta de a partes sin pelearse con
+  eventos fantasma de lo que todavía no está cableado.</p>
+</div>
+</section>
+
+<!-- ============================ 8 ============================ -->
+<section class="page-break">
+<h2 class="sec"><span class="num">08</span> Lógica: la máquina de estados</h2>
+
+<p class="lead">El nodo tiene cuatro estados y vive en RAM. Si se corta la luz, esta máquina se
+pierde — y no importa: al arrancar nace en <span class="mono">IDLE</span>, que es el estado seguro,
+y vuelve a reportar.</p>
+
+<figure>
+<svg viewBox="0 0 1000 400" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans, Liberation Sans, sans-serif">
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#15181d"/>
+    </marker>
+    <marker id="a3" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#c62828"/>
+    </marker>
+  </defs>
+
+  <!-- estados -->
+  <rect x="30" y="120" width="170" height="72" rx="36" fill="#edf7f0" stroke="#2e9e5b" stroke-width="2.4"/>
+  <text x="115" y="152" text-anchor="middle" font-size="17" font-weight="700" fill="#1c5e37">IDLE</text>
+  <text x="115" y="174" text-anchor="middle" font-size="11" fill="#1c5e37">estado seguro</text>
+
+  <rect x="272" y="120" width="180" height="72" rx="10" fill="#ffffff" stroke="#15181d" stroke-width="2"/>
+  <text x="362" y="152" text-anchor="middle" font-size="17" font-weight="700" fill="#15181d">VALIDANDO</text>
+  <text x="362" y="174" text-anchor="middle" font-size="11" fill="#5d6773">lista blanca local</text>
+
+  <rect x="524" y="120" width="170" height="72" rx="10" fill="#fdecec" stroke="#c62828" stroke-width="2"/>
+  <text x="609" y="152" text-anchor="middle" font-size="17" font-weight="700" fill="#8a1c1c">PULSO</text>
+  <text x="609" y="174" text-anchor="middle" font-size="11" fill="#8a1c1c">800 ms · relé activo</text>
+
+  <rect x="766" y="120" width="200" height="72" rx="10" fill="#eef3fd" stroke="#3b6fd4" stroke-width="2"/>
+  <text x="866" y="152" text-anchor="middle" font-size="17" font-weight="700" fill="#1e3f80">PROMESA</text>
+  <text x="866" y="174" text-anchor="middle" font-size="11" fill="#1e3f80">espera el reed · 10 s</text>
+
+  <!-- transiciones principales -->
+  <path d="M200 156 H 268" stroke="#15181d" stroke-width="2" marker-end="url(#a2)"/>
+  <text x="234" y="146" text-anchor="middle" font-size="11.5" fill="#15181d">tarjeta</text>
+
+  <path d="M452 156 H 520" stroke="#15181d" stroke-width="2" marker-end="url(#a2)"/>
+  <text x="486" y="140" text-anchor="middle" font-size="11.5" fill="#15181d">en la lista</text>
+  <text x="486" y="176" text-anchor="middle" font-size="10.5" fill="#5d6773">rele = HIGH</text>
+
+  <path d="M694 156 H 762" stroke="#15181d" stroke-width="2" marker-end="url(#a2)"/>
+  <text x="728" y="146" text-anchor="middle" font-size="11.5" fill="#15181d">800 ms</text>
+
+  <!-- retorno CONCEDIDO -->
+  <path d="M866 192 V 262 H 115 V 196" stroke="#2e9e5b" stroke-width="2.2" fill="none" marker-end="url(#a2)"/>
+  <text x="640" y="254" text-anchor="middle" font-size="12" font-weight="700" fill="#1c5e37">el reed abre → CONCEDIDO (crea sesión)</text>
+
+  <!-- retorno SIN_INGRESO -->
+  <path d="M916 192 V 310 H 115 V 196" stroke="#5d6773" stroke-width="2" fill="none" stroke-dasharray="7 4" marker-end="url(#a2)"/>
+  <text x="640" y="302" text-anchor="middle" font-size="12" fill="#5d6773">pasan 10 s sin abrir → SIN_INGRESO (no crea sesión)</text>
+
+  <!-- retorno DENEGADO -->
+  <path d="M362 192 V 358 H 115 V 196" stroke="#c62828" stroke-width="2" fill="none" marker-end="url(#a3)"/>
+  <text x="300" y="350" text-anchor="middle" font-size="12" font-weight="700" fill="#8a1c1c">no está en la lista → DENEGADO</text>
+
+  <!-- entrada boot -->
+  <path d="M115 60 V 116" stroke="#15181d" stroke-width="2" marker-end="url(#a2)"/>
+  <text x="115" y="48" text-anchor="middle" font-size="12" font-weight="700" fill="#15181d">arranque</text>
+</svg>
+<figcaption><b>Figura 4.</b> Máquina de estados del nodo. Los eventos del reed y del PIR se reportan
+<b>siempre</b>, en cualquier estado, en paralelo a esta máquina: no participan de las
+transiciones salvo por el flanco de apertura que cierra la promesa.</figcaption>
+</figure>
+
+<h3>La «promesa»: por qué no alcanza con pulsar el solenoide</h3>
+<p>Que la tarjeta sea válida no significa que alguien haya entrado. Puede pasar la tarjeta, ver que
+destraba y arrepentirse. Por eso el nodo hace una <b>promesa</b>: después del pulso espera hasta
+10 segundos a que el reed confirme que la puerta realmente se abrió.</p>
+<ul>
+  <li><b>El reed abre dentro de la ventana</b> → se reporta <span class="mono">CONCEDIDO</span>, y el
+  servidor <b>crea una sesión</b> a nombre de esa tarjeta.</li>
+  <li><b>Se cumplen los 10 s sin abrir</b> → se reporta <span class="mono">SIN_INGRESO</span>. Queda
+  registrado que la puerta se destrabó, pero <b>no se abre sesión</b>.</li>
+</ul>
+<p>La ventana arranca al comienzo del pulso, no al final: si alguien está esperando del otro lado y
+abre durante esos 800 ms, ese flanco también cuenta.</p>
+
+<div class="box info">
+  <span class="tag">Detalle de implementación que importa para el maquetado</span>
+  <p>El pulso <b>no es bloqueante</b>: no se hace con un <span class="mono">sleep(800)</span>. Si lo
+  fuera, el nodo quedaría ciego al reed justo en la ventana donde tiene que vigilarlo. El bucle
+  principal corre cada 50 ms y va contando el tiempo transcurrido.</p>
+  <p>Por el mismo motivo, <b>el trabajo de red solo se hace en <span class="mono">IDLE</span></b>:
+  un POST puede tardar hasta 3 segundos, y ese tiempo no puede caer en medio del pulso ni de la
+  promesa.</p>
+</div>
+
+<h3 class="page-break">Cronograma de una apertura exitosa</h3>
+
+<figure>
+<svg viewBox="0 0 1000 300" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans, Liberation Sans, sans-serif">
+  <!-- eje -->
+  <path d="M150 258 H 950" stroke="#5d6773" stroke-width="1.6"/>
+  <g font-size="11" fill="#5d6773" text-anchor="middle">
+    <text x="150" y="278">0</text>
+    <text x="214" y="278">800 ms</text>
+    <text x="430" y="278">≈3 s</text>
+    <text x="950" y="278">10 s</text>
+  </g>
+  <path d="M150 254 V 262 M214 254 V 262 M430 254 V 262 M950 254 V 262" stroke="#5d6773" stroke-width="1.4"/>
+
+  <!-- ventana promesa -->
+  <rect x="150" y="34" width="800" height="196" fill="#eef3fd" opacity="0.55"/>
+  <path d="M150 34 V 230 M950 34 V 230" stroke="#3b6fd4" stroke-width="1.4" stroke-dasharray="5 4"/>
+  <text x="550" y="26" text-anchor="middle" font-size="12" font-weight="700" fill="#1e3f80">ventana de la PROMESA — 10 s</text>
+
+  <!-- señal GPIO15 -->
+  <text x="20" y="70" font-size="12" font-weight="700" fill="#c62828" font-family="DejaVu Sans Mono, monospace">GPIO15</text>
+  <text x="20" y="86" font-size="10" fill="#8a1c1c">solenoide</text>
+  <path d="M60 92 H 150 V 52 H 214 V 92 H 950" stroke="#c62828" stroke-width="2.6" fill="none"/>
+  <text x="182" y="44" text-anchor="middle" font-size="11" font-weight="700" fill="#c62828">800 ms</text>
+  <text x="100" y="106" font-size="10" fill="#8a1c1c">LOW</text>
+
+  <!-- señal reed -->
+  <text x="20" y="150" font-size="12" font-weight="700" fill="#1d4ed8" font-family="DejaVu Sans Mono, monospace">GPIO27</text>
+  <text x="20" y="166" font-size="10" fill="#1e3f80">reed</text>
+  <path d="M60 172 H 430 V 132 H 950" stroke="#1d4ed8" stroke-width="2.6" fill="none"/>
+  <text x="470" y="126" font-size="11" fill="#1e3f80">puerta abierta (tras 300 ms de antirrebote)</text>
+
+  <!-- eventos -->
+  <text x="20" y="216" font-size="12" font-weight="700" fill="#15181d">Eventos</text>
+  <circle cx="150" cy="222" r="5" fill="#15181d"/>
+  <text x="150" y="244" text-anchor="middle" font-size="10.5" fill="#15181d">tarjeta OK</text>
+  <circle cx="430" cy="222" r="5" fill="#1d4ed8"/>
+  <text x="430" y="244" text-anchor="middle" font-size="10.5" fill="#1e3f80">puerta ABIERTO</text>
+  <circle cx="446" cy="222" r="5" fill="#2e9e5b"/>
+  <text x="600" y="222" font-size="10.5" font-weight="700" fill="#1c5e37">acceso CONCEDIDO → vuelve a IDLE</text>
+</svg>
+<figcaption><b>Figura 5.</b> Secuencia temporal real. El evento <span class="mono">acceso
+CONCEDIDO</span> no se emite al validar la tarjeta, sino recién cuando el reed confirma la apertura.
+Si el reed nunca cambia, a los 10 s se emite <span class="mono">SIN_INGRESO</span> en su
+lugar.</figcaption>
+</figure>
+
+<h3>Tabla de tiempos</h3>
+<table>
+  <thead><tr><th style="width:34%">Parámetro</th><th style="width:14%">Valor</th><th>Qué controla</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">T_PULSO_SOLENOIDE_MS</td><td><b>800 ms</b></td><td>Duración del pulso sobre el solenoide.</td></tr>
+    <tr><td class="mono">T_APERTURA_MS</td><td><b>10 s</b></td><td>Ventana de la promesa: desde el inicio del pulso hasta que expira.</td></tr>
+    <tr><td class="mono">T_ANTIRREBOTE_REED_MS</td><td><b>300 ms</b></td><td>Estabilidad mínima antes de reportar un cambio del reed.</td></tr>
+    <tr><td class="mono">THROTTLE_PIR_MS</td><td><b>30 s</b></td><td>Máximo un reporte de movimiento cada 30 segundos.</td></tr>
+    <tr><td class="mono">T_MISMA_TARJETA_MS</td><td><b>2 s</b></td><td>Ignora la misma tarjeta leída de nuevo dentro de ese lapso.</td></tr>
+    <tr><td class="mono">T_CICLO_MS</td><td><b>50 ms</b></td><td>Período del bucle principal.</td></tr>
+    <tr><td class="mono">T_WDT_MS</td><td><b>8 s</b></td><td>Watchdog: reinicia el nodo si el firmware se cuelga. <b>Desactivado en banco</b> (molesta al trabajar desde el REPL); se activa al montar en la puerta.</td></tr>
+    <tr><td class="mono">T_HEARTBEAT_MS</td><td><b>60 s</b></td><td>Señal de vida hacia el servidor.</td></tr>
+    <tr><td class="mono">T_REFRESCO_WHITELIST_MS</td><td><b>15 min</b></td><td>Cada cuánto baja la lista blanca del servidor.</td></tr>
+  </tbody>
+</table>
+
+<h3>Alta de tarjetas sin servidor</h3>
+<p>Hay una función que no está en la especificación pero es la que hace usable el pañol: mantener
+apretado el <b>botón del GPIO32</b> y acercar una tarjeta la <b>da de alta</b> en vez de abrir la
+puerta. Queda guardada en <span class="mono">uids.txt</span> en la flash del nodo.</p>
+
+<div class="box warn">
+  <span class="tag">Un modo de falla que vale la pena entender</span>
+  <p>El botón tiene <b>prioridad sobre abrir la puerta</b>. Si quedara trabado en «apretado», el nodo
+  daría de alta cada tarjeta en silencio y <b>nunca abriría</b> — con gente quedándose afuera sin
+  entender por qué.</p>
+  <p>Por eso el firmware lo comprueba al arrancar: en reposo el pin <b>debe leer 0</b>. Si lee 1,
+  desactiva la función de grabado, avisa por consola y sigue funcionando como lectora normal. Es
+  preferible perder el alta de tarjetas antes que perder la apertura. En la maqueta, esto significa
+  que <b>el pull-down del botón tiene que estar bien puesto</b> o el grabado no va a funcionar
+  nunca.</p>
+</div>
+</section>
+
+<!-- ============================ 9 ============================ -->
+<section class="page-break">
+<h2 class="sec"><span class="num">09</span> Qué reporta el nodo</h2>
+
+<p class="lead">Tres tipos de evento y un latido. Cada evento viaja con un identificador único para
+que el servidor pueda descartar duplicados si hubo un reenvío.</p>
+
+<table>
+  <thead><tr><th style="width:16%">Tipo</th><th style="width:38%">Datos</th><th>Cuándo se emite</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="mono"><b>acceso</b></td>
+      <td class="mono" style="font-size:8pt">uid_hex · resultado · modo_degradado</td>
+      <td><span class="mono">CONCEDIDO</span> (el reed confirmó) · <span class="mono">SIN_INGRESO</span> (expiró la promesa) · <span class="mono">DENEGADO</span> (no está en la lista)</td>
+    </tr>
+    <tr>
+      <td class="mono"><b>puerta</b></td>
+      <td class="mono" style="font-size:8pt">estado_reed · inicial</td>
+      <td>Cada cambio estable del reed. También una vez al arrancar, con <span class="mono">inicial=true</span>, para que el servidor sincronice sin recordar nada previo.</td>
+    </tr>
+    <tr>
+      <td class="mono"><b>pir</b></td>
+      <td class="mono" style="font-size:8pt">—</td>
+      <td>Movimiento detectado, como máximo una vez cada 30 s.</td>
+    </tr>
+    <tr>
+      <td class="mono"><b>heartbeat</b></td>
+      <td class="mono" style="font-size:8pt">uptime · rssi · modo_degradado</td>
+      <td>Cada 60 s. Su ausencia durante 5 minutos dispara una alarma en el servidor.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h4>Estructura de un evento</h4>
+<div class="card mono" style="font-size:8.2pt; background:var(--bg-soft); line-height:1.6">
+{<br>
+&nbsp;&nbsp;"event_id": "panol-lab01-puerta-7-42",&nbsp;&nbsp;<span style="color:var(--muted)">// nodo + nº de arranque + secuencia</span><br>
+&nbsp;&nbsp;"ubicacion_id": "panol-lab01",<br>
+&nbsp;&nbsp;"nodo_id": "panol-lab01-puerta",<br>
+&nbsp;&nbsp;"tipo": "acceso",<br>
+&nbsp;&nbsp;"timestamp": "2026-08-19T14:32:05-03:00",&nbsp;&nbsp;<span style="color:var(--muted)">// null si el nodo no está en hora</span><br>
+&nbsp;&nbsp;"uptime_ms": 184320,<br>
+&nbsp;&nbsp;"datos": { "uid_hex": "DE:AD:BE:EF", "resultado": "CONCEDIDO", "modo_degradado": false }<br>
+}
+</div>
+
+<h3>Red</h3>
+<table class="t-tight kv">
+  <tbody>
+    <tr><td>Transporte</td><td>HTTPS hacia la API del servidor (el broker MQTT lo habla el servidor, no el nodo)</td></tr>
+    <tr><td>WiFi</td><td>Multi-red: escanea el aire, elige la conocida con mejor señal y prueba la siguiente si falla</td></tr>
+    <tr><td>Credenciales</td><td>En <span class="mono">secrets.py</span>, <b>fuera del repositorio</b></td></tr>
+    <tr><td>Reintento de asociación</td><td>Cada 30 s si se cae el AP, sin bloquear el bucle principal</td></tr>
+    <tr><td>Hora</td><td>NTP al arrancar y resincronización cada 6 h (el ESP32 no tiene reloj con pila)</td></tr>
+    <tr><td>Timeout HTTP</td><td>3 s — corto a propósito: la red nunca debe demorar la puerta</td></tr>
+  </tbody>
+</table>
+
+<h3>Modo degradado</h3>
+<p>Cuando el nodo no logra hablar con el servidor entra en <b>modo degradado</b>. Conviene entender
+qué significa exactamente, porque no es lo que suena: <b>no</b> quiere decir «no puedo decidir». El
+nodo decide igual, contra su lista blanca local. Significa «no puedo refrescar la lista ni reportar
+ahora mismo». Los eventos se acumulan en <span class="mono">cola.log</span>, en la flash, y se envían
+cuando vuelve la red.</p>
+
+<table class="t-tight">
+  <thead><tr><th style="width:24%">Qué se corta</th><th style="width:24%">Puerta (desde afuera)</th><th style="width:22%">Auditoría</th><th>Recuperación</th></tr></thead>
+  <tbody>
+    <tr><td>Solo el nodo</td><td>Trabada (fail-secure)</td><td>Eventos en <span class="mono">cola.log</span></td><td>Automática al arrancar</td></tr>
+    <tr><td>Solo el servidor</td><td><b>Sigue abriendo normal</b></td><td>El nodo encola</td><td>Automática al reiniciar</td></tr>
+    <tr><td>WiFi / red</td><td><b>Sigue abriendo normal</b></td><td>El nodo encola con su timestamp</td><td>Automática al reconectar</td></tr>
+    <tr><td>Todo (apagón)</td><td>Trabada</td><td>Hueco visible por falta de latidos</td><td>Nodo → IDLE, servidor → base</td></tr>
+  </tbody>
+</table>
+<p style="font-size:8.8pt">En todos los casos, la <b>evacuación desde adentro está garantizada por el
+picaporte mecánico</b>, que no depende de nada eléctrico.</p>
+
+<p>La cola tiene un tope de <b>5000 eventos</b>. Si se llena —un corte de red de días— se descartan
+los <b>nuevos</b> y se conserva la evidencia más vieja, que es la del comienzo del incidente.</p>
+</section>
+
+<!-- ============================ 10 ============================ -->
+<section class="page-break">
+<h2 class="sec"><span class="num">10</span> Armado paso a paso</h2>
+
+<p class="lead">Orden sugerido para el maquetado. La idea es que en cada paso haya <b>una sola cosa
+nueva</b> que pueda estar mal, y que se pueda verificar antes de seguir.</p>
+
+<h3>Paso 1 · La placa sola</h3>
+<ul class="checklist">
+  <li>ESP32-WROOM alimentado por USB, con MicroPython cargado.</li>
+  <li>Verificar que arranca y llega al REPL sin bucles de reinicio.</li>
+  <li>Poner los tres sensores en <span class="mono">False</span> en <span class="mono">SENSORES</span> y <span class="mono">USAR_RED = False</span>.</li>
+</ul>
+
+<h3>Paso 2 · Reed switch</h3>
+<ul class="checklist">
+  <li>Una pata a GPIO27, la otra a GND. Sin resistencias externas.</li>
+  <li>Activar <span class="mono">"reed": True</span>.</li>
+  <li>Acercar y alejar el imán: la consola tiene que mostrar <span class="mono">REED ABIERTA</span> / <span class="mono">CERRADA</span> y el LED del GPIO33 seguirlo.</li>
+</ul>
+
+<h3>Paso 3 · Lector RC522</h3>
+<ul class="checklist">
+  <li>Cablear los cinco pines. <b>Confirmar VCC en 3,3 V con el téster antes de energizar.</b></li>
+  <li>Activar <span class="mono">"rfid": True</span>.</li>
+  <li>Al arrancar tiene que aparecer <span class="mono">RC522 OK (reg 0x37 = 0x92)</span>. Si dice «no responde», revisar MISO y RST (§6.1).</li>
+  <li>Acercar una tarjeta: debe imprimir el UID.</li>
+</ul>
+
+<h3>Paso 4 · PIR (ya con 12 V en la maqueta)</h3>
+<ul class="checklist">
+  <li>Alimentar el PIR con los 12 V y <b>unir la masa de la fuente al GND del ESP32</b>.</li>
+  <li>C → GND, NC → GPIO16.</li>
+  <li>Esperar el minuto de calentamiento antes de juzgar el comportamiento.</li>
+  <li>Activar <span class="mono">"pir": True</span> y verificar que reporta movimiento.</li>
+</ul>
+
+<h3>Paso 5 · Etapa de potencia — <span style="color:var(--v12)">sin la bobina todavía</span></h3>
+<ul class="checklist">
+  <li>Armar MOSFET, resistencia de compuerta de 220 Ω y pull-down de 10 kΩ (figura 3).</li>
+  <li><b>Con el téster en la compuerta, resetear la placa.</b> Durante el arranque la tensión tiene que quedar por debajo de ~1 V.</li>
+  <li>Recién si eso se cumple, conectar el solenoide y el diodo 1N4007 (banda hacia +12 V).</li>
+</ul>
+
+<h3>Paso 6 · Prueba del solenoide, aislada</h3>
+<p>Hay un script que pulsa el solenoide <b>sin la máquina de estados ni tarjetas</b>, para separar un
+problema eléctrico de un problema de lógica:</p>
+<div class="card mono" style="font-size:8.4pt; background:var(--bg-soft)">
+.venv/bin/mpremote connect /dev/ttyUSB0 run firmware/nodo_panol/prueba_solenoide.py
+</div>
+<p style="font-size:8.8pt; color:var(--muted)">No escribe en la flash ni toca
+<span class="mono">main.py</span>. Antes de correrlo, ver la advertencia de §12.</p>
+
+<h3>Paso 7 · Integración</h3>
+<ul class="checklist">
+  <li>Los tres sensores en <span class="mono">True</span> y el solenoide conectado.</li>
+  <li>Pasar una tarjeta autorizada: debe verse la secuencia completa <span class="mono">IDLE → VALIDANDO → PULSO → PROMESA → IDLE</span> con resultado <span class="mono">CONCEDIDO</span>.</li>
+  <li>Pasar una tarjeta desconocida: <span class="mono">DENEGADO</span>, sin pulso.</li>
+  <li>Pasar una autorizada y <b>no abrir</b>: a los 10 s, <span class="mono">SIN_INGRESO</span>.</li>
+  <li>Recién entonces, poner <span class="mono">USAR_RED = True</span>.</li>
+</ul>
+
+<h3>Herramientas de diagnóstico disponibles</h3>
+<table class="t-tight">
+  <thead><tr><th style="width:32%">Script</th><th>Para qué sirve</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">prueba_sensores.py</td><td>Lee los tres sensores en crudo, sin FSM.</td></tr>
+    <tr><td class="mono">escanear_gpio.py</td><td>Descubre en qué pin cae cada cosa cuando el cableado no está claro.</td></tr>
+    <tr><td class="mono">probe_rc522.py</td><td>Machaca el registro <span class="mono">0x37</span> para distinguir un lector muerto de uno intermitente.</td></tr>
+    <tr><td class="mono">debug_pir.py</td><td>PIR en crudo, sin el throttle de 30 s. Sirve para ver si hay rebotes.</td></tr>
+    <tr><td class="mono">prueba_solenoide.py</td><td>Pulso del MOSFET aislado de la lógica.</td></tr>
+  </tbody>
+</table>
+<p style="font-size:8.8pt">Ninguno escribe en la flash. Se corren con
+<span class="mono">mpremote ... run</span> o abriéndolos en Thonny con F5.</p>
+
+<div class="box info">
+  <span class="tag">Nota sobre el puerto serie</span>
+  <p>El ESP32 aparece como <span class="mono">/dev/ttyUSB0</span>. Thonny suele quedarse con el
+  puerto tomado: hay que hacer <i>Run → Disconnect</i> antes de usar
+  <span class="mono">mpremote</span>. Si <span class="mono">mpremote</span> falla con «could not
+  enter raw repl», normalmente es porque el firmware está en su bucle de verificación del RC522 de
+  20 s — esperar y reintentar.</p>
+</div>
+</section>
+
+<!-- ============================ 11 ============================ -->
+<section class="page-break">
+<h2 class="sec"><span class="num">11</span> Estado verificado del prototipo</h2>
+
+<p class="lead">Qué está probado sobre hardware real y qué no. Vale la pena tenerlo claro antes de
+copiar el diseño a una maqueta.</p>
+
+<table>
+  <thead><tr><th style="width:22%">Subsistema</th><th style="width:16%">Estado</th><th>Detalle de la verificación</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>RC522 (RFID)</b></td>
+      <td><span class="pill" style="background:#e2f3ea;color:var(--ok-ink)">Verificado</span></td>
+      <td>Registro <span class="mono">0x37 = 0x92</span>, lee tarjetas y valida contra la lista. Costó llegar: primero daba <span class="mono">0x00/0xFF</span> por MISO y por el RST sin cablear.</td>
+    </tr>
+    <tr>
+      <td><b>Reed switch</b></td>
+      <td><span class="pill" style="background:#e2f3ea;color:var(--ok-ink)">Verificado</span></td>
+      <td>Funcionando en GPIO27 con pull-up interno. Se probó GPIO13 y se volvió a 27. GPIO12 descartado por strapping.</td>
+    </tr>
+    <tr>
+      <td><b>PIR DSC LC-100-PI</b></td>
+      <td><span class="pill" style="background:#e2f3ea;color:var(--ok-ink)">Verificado</span></td>
+      <td>Pulsos limpios y consistentes de ~1,7 s, sin rebotes, con masa firme y pull-up interno.</td>
+    </tr>
+    <tr>
+      <td><b>FSM completa</b></td>
+      <td><span class="pill" style="background:#e2f3ea;color:var(--ok-ink)">Verificado</span></td>
+      <td>Secuencia <span class="mono">IDLE → VALIDANDO → PULSO → PROMESA → IDLE</span> con <span class="mono">CONCEDIDO</span> confirmado por el reed real.</td>
+    </tr>
+    <tr>
+      <td><b>Red y reporte</b></td>
+      <td><span class="pill" style="background:#e2f3ea;color:var(--ok-ink)">Verificado</span></td>
+      <td>El nodo, desde otra red, reporta al servidor por HTTPS y crea sesiones con nombre en la base (<span class="mono">modo_degradado=false</span>).</td>
+    </tr>
+    <tr>
+      <td><b>Botón GPIO32</b></td>
+      <td><span class="pill" style="background:var(--warn-bg);color:var(--warn-ink)">Parcial</span></td>
+      <td>Leyó valores inconsistentes entre arranques. Por eso existe la protección descrita en §8. En la maqueta, poner un pull-down bien firme.</td>
+    </tr>
+    <tr>
+      <td><b>Solenoide + MOSFET</b></td>
+      <td><span class="pill" style="background:var(--dang-bg);color:var(--dang-ink)">A confirmar</span></td>
+      <td>Es la parte menos ejercitada del conjunto y tiene una inconsistencia pendiente. Ver §12.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="box ok">
+  <span class="tag">Lo importante para el maquetado</span>
+  <p>Toda la parte de sensores y lógica está probada y se puede copiar con confianza. La única zona
+  que hay que <b>verificar con téster antes de dar por buena</b> es la etapa de potencia del
+  solenoide.</p>
+</div>
+</section>
+
+<!-- ============================ 12 ============================ -->
+<section class="page-break">
+<h2 class="sec"><span class="num">12</span> Puntos abiertos y advertencias</h2>
+
+<p class="lead">Honestidad sobre lo que todavía no está cerrado. Son tres cosas, y las tres afectan
+la misma parte del circuito.</p>
+
+<h3>12.1 · Los comentarios del código sobre el relé contradicen al código</h3>
+<p>En <span class="mono">config.py</span>, los comentarios que acompañan a
+<span class="mono">PIN_RELE</span> y <span class="mono">RELE_ACTIVO_EN</span> afirman que el montaje
+es <b>activo en LOW</b> con reposo en HIGH. <b>El código hace exactamente lo contrario:</b></p>
+
+<table class="t-tight">
+  <thead><tr><th style="width:38%">Fuente</th><th style="width:26%">Reposo</th><th>Activación</th></tr></thead>
+  <tbody>
+    <tr><td>Comentarios de <span class="mono">config.py</span></td><td>HIGH</td><td>LOW</td></tr>
+    <tr><td><b>Lo que ejecuta <span class="mono">main.py</span></b></td><td><b>LOW</b> <span class="mono">(1 − 1 = 0)</span></td><td><b>HIGH</b> <span class="mono">(RELE_ACTIVO_EN = 1)</span></td></tr>
+  </tbody>
+</table>
+
+<p>Lo que corre en la placa es <b>activo en HIGH</b>, que además es lo coherente con un MOSFET N en
+<i>low-side</i>: compuerta en alto → conduce → solenoide energizado. La tabla de §6.4 y la figura 3
+de este documento describen <b>el comportamiento real del firmware</b>, no los comentarios.</p>
+
+<div class="box warn">
+  <span class="tag">Consecuencia práctica</span>
+  <p>El mismo comentario dice que hace falta un <b>pull-up</b> externo de 10 kΩ. Eso sería correcto
+  para un montaje activo-LOW, pero con el firmware actual <b>lo que hay que poner es un
+  pull-DOWN</b>. Un pull-up dejaría la compuerta alta en reposo y el solenoide energizado de forma
+  permanente. El script <span class="mono">prueba_solenoide.py</span> lo dice bien («pull-DOWN de
+  10k»); el comentario de <span class="mono">config.py</span> quedó viejo.</p>
+</div>
+
+<h3>12.2 · <span class="mono">prueba_solenoide.py</span> no pulsa</h3>
+<p>El script de prueba aislada calcula el estado de reposo como
+<span class="mono">0 − RELE_ACTIVO_EN</span>, mientras que <span class="mono">main.py</span> usa
+<span class="mono">1 − RELE_ACTIVO_EN</span>. La diferencia no es cosmética: con esa fórmula el valor
+de reposo y el de activación <b>terminan siendo el mismo nivel lógico</b>, así que el script nunca
+genera un flanco.</p>
+
+<table class="t-tight">
+  <thead><tr><th style="width:30%">Configuración</th><th style="width:22%">«Reposo» calculado</th><th style="width:20%">«Activo»</th><th>Resultado</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">RELE_ACTIVO_EN = 1</td><td class="mono">−1 → HIGH</td><td class="mono">1 → HIGH</td><td>Solenoide <b>siempre energizado</b>, incluso al terminar el script</td></tr>
+    <tr><td class="mono">RELE_ACTIVO_EN = 0</td><td class="mono">0 → LOW</td><td class="mono">0 → LOW</td><td>Solenoide <b>nunca energizado</b>: no pasa nada</td></tr>
+  </tbody>
+</table>
+
+<div class="box dang">
+  <span class="tag">Antes de correr el script en la maqueta</span>
+  <p>Corregir la línea 22 de <span class="mono">prueba_solenoide.py</span>, cambiando
+  <span class="mono">REPOSO = 0 - config.RELE_ACTIVO_EN</span> por
+  <span class="mono">REPOSO = 1 - config.RELE_ACTIVO_EN</span>, que es la fórmula que usa
+  <span class="mono">main.py</span>.</p>
+  <p>Sin esa corrección, con la configuración actual el solenoide queda <b>energizado de forma
+  continua</b> durante toda la prueba y también después de terminar — la bobina se calienta y se
+  puede dañar. Muy probablemente sea lo que produjo la impresión de «lógica invertida» que quedó
+  anotada en los comentarios del punto 12.1.</p>
+</div>
+
+<h3>12.3 · Documentación desactualizada en el repositorio</h3>
+<table class="t-tight">
+  <thead><tr><th style="width:32%">Dónde</th><th style="width:30%">Dice</th><th>Lo correcto</th></tr></thead>
+  <tbody>
+    <tr><td><span class="mono">README.md</span> · mapa de pines</td><td>Relé en GPIO26</td><td><b>GPIO15</b></td></tr>
+    <tr><td><span class="mono">README.md</span> · mapa de pines</td><td>PIR HC-SR501, jumper retrigger H</td><td><b>DSC LC-100-PI</b>, contacto seco N.C. a 12 V</td></tr>
+    <tr><td><span class="mono">README.md</span> · mapa de pines</td><td>«SoftSPI»</td><td>SPI de <b>hardware</b> (SPI2/VSPI)</td></tr>
+    <tr><td><span class="mono">main.py</span> · <span class="mono">poll_pir()</span></td><td>Comentario sobre el HC-SR501 y su jumper</td><td>Comentario heredado; el sensor real es el DSC</td></tr>
+  </tbody>
+</table>
+
+<h3>12.4 · Decisiones que dependen del montaje final</h3>
+<ul>
+  <li><b>Watchdog desactivado.</b> <span class="mono">USAR_WDT = False</span> mientras se trabaja en
+  banco, porque cortar con Ctrl+C y quedarse en el REPL dispara el reinicio. <b>Hay que activarlo al
+  montar en la puerta.</b></li>
+  <li><b>Módulo de relé en lugar de MOSFET.</b> Si en la maqueta se usa un módulo de relé
+  optoacoplado —la mayoría son activos en LOW— hay que cambiar
+  <span class="mono">RELE_ACTIVO_EN</span> a <span class="mono">0</span> y sustituir el pull-down por
+  un pull-up. El firmware ya está preparado para las dos polaridades: es una sola constante.</li>
+  <li><b>Credenciales por defecto.</b> Las claves <span class="mono">cambiar-*</span> del broker MQTT
+  son conocidas a propósito y hay que rotarlas antes de instalar en el colegio.</li>
+</ul>
+
+<div class="footnote">
+  <b>Fuentes de este documento.</b> Firmware:
+  <span class="mono">firmware/nodo_panol/{config,main,red,cola,reloj,mfrc522,prueba_solenoide}.py</span>.
+  Diseño: <span class="mono">docs/DISENO.md</span>. Verificaciones sobre hardware real registradas en
+  las notas de banco del proyecto. Los valores de pines y tiempos se leyeron del código, no de la
+  documentación previa.
+</div>
+</section>
+
+</body>
+</html>
