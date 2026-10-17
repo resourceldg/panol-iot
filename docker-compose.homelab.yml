@@ -25,7 +25,9 @@ services:
     #   - Desde afuera: HTTPS por Caddy (red `edge`), con token. Para el nodo en
     #     otra red. Ver el bloque panol-api.<dominio> del Caddyfile.
     ports:
-      - "${PANOL_API_BIND:-0.0.0.0}:18500:18500"
+      # Solo loopback: la usan Funnel (solo /api/whitelist) y Caddy, desde el
+      # propio host. En 0.0.0.0 quedaba HTTP sin cifrar para toda la LAN.
+      - "${PANOL_API_BIND:-127.0.0.1}:18500:18500"
     networks: [panol, edge]
     deploy:
       resources:
