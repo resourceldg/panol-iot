@@ -89,9 +89,26 @@ deja publicar un `acceso CONCEDIDO` falso y la auditoría deja de valer. Por eso
 el puente lee `MQTT_USER` / `MQTT_PASSWORD` y llama a `username_pw_set()` antes
 de conectar. Si no están definidas —el caso local— se conecta como siempre.
 
-Credenciales por defecto (conocidas a propósito, **cambiar antes del colegio**):
-`panol-servidor` / `cambiar-servidor-panol` para api y puente,
-`nodo-panol-puerta` / `cambiar-nodo-puerta` para el ESP32.
+Credenciales: `panol-servidor` / `cambiar-servidor-panol` para api y puente
+(solo red interna). Los **nodos** tienen clave **aleatoria** que sortea el
+homelab (`/etc/panol/secrets/mqtt-nodo-panol-puerta.pass`) y se graba en el
+`secrets.py` de la placa como `MQTT_PASS` — nunca en el repo.
+
+## Cómo reporta el nodo (etapa 2b, desde el 17/10/2026)
+
+El firmware mantiene **una** conexión MQTT/TLS abierta a
+`panol.tail4eda13.ts.net:443` (nodo Tailscale "panol" del homelab → broker) y
+publica cada evento al instante con QoS 1 (`firmware/nodo_panol/enlace.py`).
+Es un nombre fijo de internet: funciona igual con el server en cualquier red.
+
+- Nada se borra de la cola en flash sin el acuse del broker; si se corta, los
+  eventos esperan y salen al reconectar (reintento 1 … 15 s).
+- Certificado verificado contra la raíz ISRG X2 (`ca_isrg_x2.der`).
+- HTTP queda solo para la whitelist. El respaldo HTTP de eventos está apagado
+  (`USAR_RESPALDO_HTTP`): un POST con el enlace inestable bloqueó el bucle 87 s.
+- Medido en la placa: handshake TLS 4-5 s una vez; evento → servidor ~1 s
+  (antes, con un HTTPS por envío, 5-105 s). Detalle y pruebas de corte en
+  `homelab/docs/panol-iot.md`, "Entrada remota".
 
 ## Topics MQTT
 
