@@ -125,6 +125,12 @@ llega como **pendiente** y **no abre** hasta que alguien la aprueba.
 - **Terminal:** `docker exec -it panol-api python -m credenciales pendientes`
   (también `activas`, `aprobar <uid> <email>`, `rechazar <uid>`, `baja <uid>`).
 
+## Grabar la placa
+
+`firmware/grabar.sh` (con Thonny cerrado): sube `main.py` y los módulos grandes
+**precompilados a `.mpy`** (compilarlos en la placa fragmenta la RAM y el TLS
+del enlace MQTT se queda sin memoria). No pisa el `config.py` de la placa.
+
 ## Topics MQTT
 
 ```
@@ -132,6 +138,7 @@ panol/<ubicacion_id>/<nodo_id>/evento/<tipo>   nodo     -> servidor
 panol/<ubicacion_id>/<nodo_id>/heartbeat       nodo     -> servidor
 panol/<ubicacion_id>/alarma/<codigo>           servidor -> Node-RED
 panol/<ubicacion_id>/sesion                    servidor -> Node-RED
+panol/<ubicacion_id>/<nodo_id>/cmd/whitelist   servidor -> nodo (retenido: tarjetas activas)
 ```
 
 Todo con QoS 1. Como "al menos una vez" admite duplicados por diseño, la idempotencia por
