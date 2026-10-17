@@ -67,7 +67,11 @@ T_CICLO_MS = 50               # Periodo del bucle principal
 # (cortar con Ctrl+C y quedarse en el REPL dispara el reset), asi que se
 # activa recien al montar en la puerta.
 USAR_WDT = False
-T_WDT_MS = 8_000
+# Tiene que superar la operacion de red mas larga que bloquea el bucle: el
+# (re)enganche MQTT (TCP hasta T_CONEXION_MQTT_S + handshake TLS ~5 s) o un
+# HTTPS de respaldo (T_TIMEOUT_HTTP_S). Con 8 s reiniciaria la placa en medio
+# de un handshake.
+T_WDT_MS = 30_000
 
 # --- Red ------------------------------------------------------------------
 # Subred WiFi aislada de IoT. Los nodos NO viven en la red de los alumnos ni
@@ -149,7 +153,9 @@ T_RESYNC_NTP_MS = 6 * 3_600_000  # Resync de reloj cada 6 h. El ESP32 no tiene
                                 # sesion.
 T_TIMEOUT_NTP_S = 2             # Acotado: sin esto, un NTP inalcanzable puede
                                 # bloquear el bucle principal ~30 s
-T_TIMEOUT_HTTP_S = 3            # Corto: la red nunca debe demorar la puerta
+T_TIMEOUT_HTTP_S = 8            # El handshake TLS del ESP32 por Funnel tarda 4-5 s: con 3 nunca
+                                # completaba. Solo corre en IDLE (nunca en la promesa)
+                                # y con MQTT andando solo se usa para la whitelist.
 T_HEARTBEAT_MS = 60_000         # Señal de vida (spec seccion 12)
 T_REFRESCO_WHITELIST_MS = 900_000   # 15 min
 T_REINTENTO_RED_MS = 30_000     # Espera tras un fallo, para no bloquear
