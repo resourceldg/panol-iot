@@ -110,6 +110,21 @@ Es un nombre fijo de internet: funciona igual con el server en cualquier red.
   (antes, con un HTTPS por envío, 5-105 s). Detalle y pruebas de corte en
   `homelab/docs/panol-iot.md`, "Entrada remota".
 
+## Quién puede entrar (credenciales)
+
+La base del pañol es la **única fuente de verdad**: el nodo solo abre con las
+tarjetas activas del servidor (las baja como whitelist cada 15 min y guarda
+copia en flash para andar sin red). Una tarjeta grabada con el botón del nodo
+llega como **pendiente** y **no abre** hasta que alguien la aprueba.
+
+- **Pantalla:** tablero **"Pañol · Credenciales"** en ThingsBoard (privado):
+  tarjetas por estado, **Aprobar** (pide el email de la persona), **Rechazar**,
+  **Dar de baja**. Lo mantiene el servicio `sync-tb`
+  (`server/adapters/sync_tb.py`), que publica cada tarjeta como asset y aplica
+  los pedidos con las mismas validaciones que la terminal.
+- **Terminal:** `docker exec -it panol-api python -m credenciales pendientes`
+  (también `activas`, `aprobar <uid> <email>`, `rechazar <uid>`, `baja <uid>`).
+
 ## Topics MQTT
 
 ```
