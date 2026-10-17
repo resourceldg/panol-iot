@@ -121,11 +121,16 @@ MQTT_VERIFICAR_TLS = True         # verificar el certificado (necesita hora NTP)
 # En DER y una sola: con X1+X2 en PEM, el ESP32 se quedaba sin memoria al
 # parsear (MBEDTLS_ERR_X509_ALLOC_FAILED).
 ARCHIVO_CA = "ca_isrg_x2.der"
-T_CONEXION_MQTT_S = 10            # tope del handshake TCP+TLS al (re)conectar
+T_CONEXION_MQTT_S = 5             # tope de cada paso de red al (re)conectar
 T_ESCRITURA_MQTT_S = 2            # tope para escribir un paquete
-T_REINTENTO_MQTT_MAX_MS = 30_000  # backoff de reconexion: 1, 2, 4 ... 30 s
+T_REINTENTO_MQTT_MAX_MS = 15_000  # backoff de reconexion: 1, 2, 4 ... 15 s
 VENTANA_MQTT = 10                 # eventos publicados sin acuse a la vez
-T_RESPALDO_HTTP_MS = 120_000      # sin MQTT por 2 min: volver a HTTP
+# Respaldo HTTP para EVENTOS: apagado. Probado en la placa: un POST por
+# Funnel con el enlace inestable bloqueo el bucle 87 s (urequests aplica el
+# timeout por operacion, no al total) y el PIR no detecto nada en ese lapso.
+# Sin MQTT, los eventos esperan en la cola en flash y salen al reconectar.
+USAR_RESPALDO_HTTP = False
+T_RESPALDO_HTTP_MS = 120_000      # si se activa: sin MQTT por 2 min -> HTTP
 
 # Token para autenticar contra la API cuando se llega por internet (HTTPS via
 # Caddy). En la LAN, con la API sin token, se deja vacío. Es el mismo valor que

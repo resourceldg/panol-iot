@@ -267,7 +267,7 @@ class PruebaEnlace(unittest.TestCase):
         self.correr(m, t, 40)
         esperas = [b2 - a for a, b2 in zip(intentos, intentos[1:])]
         self.assertGreaterEqual(len(intentos), 4)
-        self.assertLessEqual(len(intentos), 9)          # 1+2+4+8+16+30... no cada 50 ms
+        self.assertLessEqual(len(intentos), 9)          # 1+2+4+8+15... no cada 50 ms
         self.assertEqual(esperas[:4], sorted(esperas[:4]))
 
     def test_keepalive_y_broker_mudo(self):

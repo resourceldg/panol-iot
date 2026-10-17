@@ -451,8 +451,8 @@ def _tareas_mqtt(ahora, al_actualizar_whitelist):
     - La whitelist se sigue bajando por HTTPS cada 15 min. Antes se cierra el
       enlace: dos sesiones TLS a la vez no entran en el heap del ESP32. Los
       eventos esperan en flash unos segundos y salen al reconectar.
-    - Si MQTT esta caido mas de T_RESPALDO_HTTP_MS, se usa HTTP (heartbeat y
-      cola) como antes, intercalado con los reintentos de MQTT.
+    - Respaldo HTTP de eventos solo si USAR_RESPALDO_HTTP (apagado: ver
+      config). Sin MQTT, los eventos esperan en flash.
     """
     global _degradado, _ultima_whitelist_ms
     if (_ultima_whitelist_ms is None
@@ -469,6 +469,6 @@ def _tareas_mqtt(ahora, al_actualizar_whitelist):
     _degradado = True
     # Una vuelta que ya pago un handshake (fallido) no hace nada mas: dos TLS
     # seguidos fragmentan el heap. El respaldo HTTP va en otra vuelta.
-    if intento:
+    if intento or not getattr(config, "USAR_RESPALDO_HTTP", False):
         return True
     return enlace.caido_hace_ms(ahora) < config.T_RESPALDO_HTTP_MS
