@@ -139,6 +139,9 @@ def cargar_red():
     sys.modules["config"] = config
     sys.modules["cola"] = cola
     sys.modules["reloj"] = reloj
+    # Estas pruebas cubren el camino HTTP (config sin USAR_MQTT); el enlace
+    # MQTT tiene las suyas en test_enlace.py.
+    sys.modules["enlace"] = types.SimpleNamespace()
 
     # Los ticks se inyectan en el espacio de nombres en vez de importarse.
     with open(RUTA_RED) as f:

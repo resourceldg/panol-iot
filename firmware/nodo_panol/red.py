@@ -16,6 +16,7 @@ import gc
 import config
 import cola
 import reloj
+import enlace
 
 try:
     import urequests as requests
@@ -412,6 +413,12 @@ def tareas(ahora, al_actualizar_whitelist):
     # Con red, mantener la hora. Va antes del backoff de HTTP porque un
     # servidor caido no tiene por que dejar al nodo fuera de hora.
     _asegurar_hora(ahora)
+    # Etapa 2b: eventos y latido por el enlace MQTT persistente.
+    if getattr(config, "USAR_MQTT", False):
+        if _tareas_mqtt(ahora, al_actualizar_whitelist):
+            return
+        # Sin MQTT hace rato: sigue abajo el camino HTTP, como respaldo.
+
     # Backoff: mientras el servidor no responda, no se reintenta en cada
     # vuelta. Si no, el bucle principal se comeria un timeout cada 50 ms.
     if ticks_diff(ahora, _proximo_intento_ms) < 0:
@@ -435,3 +442,33 @@ def tareas(ahora, al_actualizar_whitelist):
         return
 
     _vaciar_cola()
+
+
+def _tareas_mqtt(ahora, al_actualizar_whitelist):
+    """Trabajo de red con el enlace MQTT. Devuelve True si ya se ocupo de
+    todo en esta vuelta; False para caer al respaldo HTTP.
+
+    - La whitelist se sigue bajando por HTTPS cada 15 min. Antes se cierra el
+      enlace: dos sesiones TLS a la vez no entran en el heap del ESP32. Los
+      eventos esperan en flash unos segundos y salen al reconectar.
+    - Si MQTT esta caido mas de T_RESPALDO_HTTP_MS, se usa HTTP (heartbeat y
+      cola) como antes, intercalado con los reintentos de MQTT.
+    """
+    global _degradado, _ultima_whitelist_ms
+    if (_ultima_whitelist_ms is None
+            or ticks_diff(ahora, _ultima_whitelist_ms) >= config.T_REFRESCO_WHITELIST_MS):
+        if ticks_diff(ahora, _proximo_intento_ms) >= 0:
+            _ultima_whitelist_ms = ahora
+            enlace.cerrar("refresco de whitelist por HTTPS")
+            _refrescar_whitelist(al_actualizar_whitelist)
+            return True
+    intento = enlace.toca_intentar(ahora)
+    if enlace.tarea(ahora, rssi(), _degradado):
+        _degradado = False
+        return True
+    _degradado = True
+    # Una vuelta que ya pago un handshake (fallido) no hace nada mas: dos TLS
+    # seguidos fragmentan el heap. El respaldo HTTP va en otra vuelta.
+    if intento:
+        return True
+    return enlace.caido_hace_ms(ahora) < config.T_RESPALDO_HTTP_MS

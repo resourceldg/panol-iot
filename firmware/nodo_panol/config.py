@@ -95,14 +95,29 @@ except ImportError:
 SERVER_URL = "https://homelab-01.tail4eda13.ts.net:8443"
 # SERVER_URL = "http://192.168.100.44:18500"   # notebook, pruebas de banco
 
-# Credenciales MQTT de este nodo en el broker del homelab. Todavia NO se usan:
-# la placa reporta por HTTP y el MQTT lo habla el puente del servidor. Quedan
-# aca para cuando el firmware publique directo (etapa 2b). Son las mismas que
-# entrega el homelab en /etc/panol/secrets/nodos.txt.
-MQTT_HOST = "192.168.100.48"
-MQTT_PORT = 1883
+# --- Enlace MQTT persistente (etapa 2b) -------------------------------------
+# Eventos y latido viajan por UNA conexion MQTT/TLS que queda abierta, al nodo
+# Tailscale "panol" del homelab (Funnel -> broker). Es un nombre fijo: funciona
+# desde cualquier red, sin depender de la IP ni del lugar del servidor. HTTP
+# queda para bajar la whitelist y como respaldo si MQTT no anda (ver red.py).
+USAR_MQTT = True
+MQTT_HOST = "panol.tail4eda13.ts.net"
+MQTT_PORT = 443
 MQTT_USER = "nodo-panol-puerta"
-MQTT_PASS = "cambiar-nodo-puerta"
+# La clave es aleatoria y vive en el server (/etc/panol/secrets/
+# mqtt-nodo-panol-puerta.pass). NO va al repo: se carga en secrets.py.
+try:
+    from secrets import MQTT_PASS
+except ImportError:
+    MQTT_PASS = ""
+MQTT_KEEPALIVE_S = 60             # PINGREQ si no hubo trafico en 30 s
+MQTT_VERIFICAR_TLS = True         # verificar el certificado (necesita hora NTP)
+ARCHIVO_CA = "ca_letsencrypt.pem"   # raices ISRG X1 y X2 (Let's Encrypt)
+T_CONEXION_MQTT_S = 10            # tope del handshake TCP+TLS al (re)conectar
+T_ESCRITURA_MQTT_S = 2            # tope para escribir un paquete
+T_REINTENTO_MQTT_MAX_MS = 30_000  # backoff de reconexion: 1, 2, 4 ... 30 s
+VENTANA_MQTT = 10                 # eventos publicados sin acuse a la vez
+T_RESPALDO_HTTP_MS = 120_000      # sin MQTT por 2 min: volver a HTTP
 
 # Token para autenticar contra la API cuando se llega por internet (HTTPS via
 # Caddy). En la LAN, con la API sin token, se deja vacío. Es el mismo valor que
