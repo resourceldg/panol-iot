@@ -195,6 +195,8 @@ def marcar_procesado(
     event_id: str | None,
     nodo_id: str | None,
     tipo: str,
+    ocurrido=None,
+    via: str | None = None,
 ) -> None:
     if not event_id:
         return
@@ -207,9 +209,9 @@ def marcar_procesado(
     # trata como lo que es, un duplicado. La idempotencia la garantiza la base,
     # no el orden en que corran los procesos.
     conn.execute(
-        "INSERT INTO eventos_procesados (event_id, nodo_id, tipo)"
-        " VALUES (%s, %s, %s)",
-        (event_id, nodo_id, tipo),
+        "INSERT INTO eventos_procesados (event_id, nodo_id, tipo, ocurrido, via)"
+        " VALUES (%s, %s, %s, %s, %s)",
+        (event_id, nodo_id, tipo, ocurrido, via),
     )
 
 
@@ -293,7 +295,8 @@ def sesion_reanudable(
 
 
 def aplicar(
-    conn: psycopg.Connection, efectos: list, evento: m.Evento | None = None
+    conn: psycopg.Connection, efectos: list, evento: m.Evento | None = None,
+    via: str | None = None,
 ) -> None:
     """Escribe todo lo que el motor decidió, en una sola transacción.
 
@@ -309,7 +312,8 @@ def aplicar(
         for efecto in efectos:
             _aplicar_uno(conn, efecto)
         if evento is not None:
-            marcar_procesado(conn, evento.event_id, evento.nodo_id, evento.tipo)
+            marcar_procesado(conn, evento.event_id, evento.nodo_id, evento.tipo,
+                             ocurrido=evento.ts, via=via)
 
 
 def _aplicar_uno(conn: psycopg.Connection, e) -> None:

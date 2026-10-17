@@ -136,7 +136,7 @@ def _evento(partes, sobre, cliente):
 
     tipo, datos = aplanar_sobre(sobre)
     evento = construir_evento(tipo, datos)
-    efectos = servicio.ingerir(_conexion(), evento)
+    efectos = servicio.ingerir(_conexion(), evento, via="mqtt")
 
     if not efectos:
         log(evento.event_id, "duplicado, ignorado")

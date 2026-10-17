@@ -221,6 +221,14 @@ ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS reanudaciones INTEGER NOT NULL DEF
 -- La purga de retención borra por fecha: sin estos índices, cada pasada sería
 -- un scan completo de la tabla más grande del sistema.
 CREATE INDEX IF NOT EXISTS ix_eventos_procesados_recibido ON eventos_procesados (recibido);
+
+-- Demora de punta a punta: cuándo ocurrió el evento EN EL NODO y por dónde
+-- llegó (http / mqtt). recibido - ocurrido es lo que tardó en llegar; es la
+-- métrica que vigila Grafana. Si el nodo no estaba en hora, `ocurrido` es la
+-- hora de llegada (demora 0): esos casos son solo los primeros segundos tras
+-- un arranque sin NTP.
+ALTER TABLE eventos_procesados ADD COLUMN IF NOT EXISTS ocurrido TIMESTAMPTZ;
+ALTER TABLE eventos_procesados ADD COLUMN IF NOT EXISTS via TEXT;
 CREATE INDEX IF NOT EXISTS ix_eventos_armario_ts          ON eventos_armario (timestamp);
 CREATE INDEX IF NOT EXISTS ix_alarmas_ts                  ON alarmas (timestamp);
 

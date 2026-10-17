@@ -67,7 +67,11 @@ T_CICLO_MS = 50               # Periodo del bucle principal
 # (cortar con Ctrl+C y quedarse en el REPL dispara el reset), asi que se
 # activa recien al montar en la puerta.
 USAR_WDT = False
-T_WDT_MS = 8_000
+# Tiene que superar la operacion de red mas larga que bloquea el bucle: el
+# (re)enganche MQTT (TCP hasta T_CONEXION_MQTT_S + handshake TLS ~5 s) o un
+# HTTPS de respaldo (T_TIMEOUT_HTTP_S). Con 8 s reiniciaria la placa en medio
+# de un handshake.
+T_WDT_MS = 30_000
 
 # --- Red ------------------------------------------------------------------
 # Subred WiFi aislada de IoT. Los nodos NO viven en la red de los alumnos ni
@@ -95,14 +99,38 @@ except ImportError:
 SERVER_URL = "https://homelab-01.tail4eda13.ts.net:8443"
 # SERVER_URL = "http://192.168.100.44:18500"   # notebook, pruebas de banco
 
-# Credenciales MQTT de este nodo en el broker del homelab. Todavia NO se usan:
-# la placa reporta por HTTP y el MQTT lo habla el puente del servidor. Quedan
-# aca para cuando el firmware publique directo (etapa 2b). Son las mismas que
-# entrega el homelab en /etc/panol/secrets/nodos.txt.
-MQTT_HOST = "192.168.100.48"
-MQTT_PORT = 1883
+# --- Enlace MQTT persistente (etapa 2b) -------------------------------------
+# Eventos y latido viajan por UNA conexion MQTT/TLS que queda abierta, al nodo
+# Tailscale "panol" del homelab (Funnel -> broker). Es un nombre fijo: funciona
+# desde cualquier red, sin depender de la IP ni del lugar del servidor. HTTP
+# queda para bajar la whitelist y como respaldo si MQTT no anda (ver red.py).
+USAR_MQTT = True
+MQTT_HOST = "panol.tail4eda13.ts.net"
+MQTT_PORT = 443
 MQTT_USER = "nodo-panol-puerta"
-MQTT_PASS = "cambiar-nodo-puerta"
+# La clave es aleatoria y vive en el server (/etc/panol/secrets/
+# mqtt-nodo-panol-puerta.pass). NO va al repo: se carga en secrets.py.
+try:
+    from secrets import MQTT_PASS
+except ImportError:
+    MQTT_PASS = ""
+MQTT_KEEPALIVE_S = 60             # PINGREQ si no hubo trafico en 30 s
+MQTT_VERIFICAR_TLS = True         # verificar el certificado (necesita hora NTP)
+# Raiz ISRG X2 en DER (543 bytes, vence en 2040). Los certificados de
+# Tailscale son ECDSA y encadenan a X2 (Let's Encrypt YE2 -> Root YE -> X2).
+# En DER y una sola: con X1+X2 en PEM, el ESP32 se quedaba sin memoria al
+# parsear (MBEDTLS_ERR_X509_ALLOC_FAILED).
+ARCHIVO_CA = "ca_isrg_x2.der"
+T_CONEXION_MQTT_S = 5             # tope de cada paso de red al (re)conectar
+T_ESCRITURA_MQTT_S = 2            # tope para escribir un paquete
+T_REINTENTO_MQTT_MAX_MS = 15_000  # backoff de reconexion: 1, 2, 4 ... 15 s
+VENTANA_MQTT = 10                 # eventos publicados sin acuse a la vez
+# Respaldo HTTP para EVENTOS: apagado. Probado en la placa: un POST por
+# Funnel con el enlace inestable bloqueo el bucle 87 s (urequests aplica el
+# timeout por operacion, no al total) y el PIR no detecto nada en ese lapso.
+# Sin MQTT, los eventos esperan en la cola en flash y salen al reconectar.
+USAR_RESPALDO_HTTP = False
+T_RESPALDO_HTTP_MS = 120_000      # si se activa: sin MQTT por 2 min -> HTTP
 
 # Token para autenticar contra la API cuando se llega por internet (HTTPS via
 # Caddy). En la LAN, con la API sin token, se deja vacío. Es el mismo valor que
@@ -130,7 +158,9 @@ T_RESYNC_NTP_MS = 6 * 3_600_000  # Resync de reloj cada 6 h. El ESP32 no tiene
                                 # sesion.
 T_TIMEOUT_NTP_S = 2             # Acotado: sin esto, un NTP inalcanzable puede
                                 # bloquear el bucle principal ~30 s
-T_TIMEOUT_HTTP_S = 3            # Corto: la red nunca debe demorar la puerta
+T_TIMEOUT_HTTP_S = 8            # El handshake TLS del ESP32 por Funnel tarda 4-5 s: con 3 nunca
+                                # completaba. Solo corre en IDLE (nunca en la promesa)
+                                # y con MQTT andando solo se usa para la whitelist.
 T_HEARTBEAT_MS = 60_000         # Señal de vida (spec seccion 12)
 T_REFRESCO_WHITELIST_MS = 900_000   # 15 min
 T_REINTENTO_RED_MS = 30_000     # Espera tras un fallo, para no bloquear
