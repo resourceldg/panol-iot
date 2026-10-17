@@ -21,7 +21,9 @@ from db import repositorio
 
 HORAS_INICIALES = 24       # al arrancar: historia para que el tablero no nazca vacío
 _ultimo = {}               # tabla -> último id publicado
-_sesiones = {}             # id -> "EN_CURSO" | "CERRADA" ya publicado
+# (id, inicio) -> "EN_CURSO" | "CERRADA" ya publicado. Con el inicio en la
+# clave, una sesión nueva que reusa un id tras vaciar la base no se confunde.
+_sesiones = {}
 _limpiar = []              # (epoch, ubicacion, clave) alarmas a dar por resueltas
 _abiertos = {}             # (ubicacion, armario) -> epoch de apertura
 _dispositivos = {}         # nombre -> id en ThingsBoard
@@ -35,6 +37,14 @@ def _ms(ts):
 
 def _nuevos(conn, tabla, columnas):
     desde = repositorio.ahora() - timedelta(hours=HORAS_INICIALES)
+    # La base se puede vaciar (modo prueba del homelab: reset cada 6 h). Los ids
+    # vuelven a empezar y, si el cursor quedara alto, los eventos nuevos no se
+    # publicarían nunca. Si el id más alto es menor que el cursor: desde cero.
+    maximo = conn.execute(f"SELECT coalesce(max(id), 0) AS m FROM {tabla}").fetchone()["m"]
+    if maximo < _ultimo.get(tabla, 0):
+        print(f"[TELEMETRIA] {tabla}: la base se vació (id {maximo} < {_ultimo[tabla]}), empiezo de nuevo",
+              flush=True)
+        _ultimo[tabla] = 0
     filas = conn.execute(
         f"SELECT id, ubicacion_id, timestamp, {columnas} FROM {tabla}"
         " WHERE id > %s AND timestamp > %s ORDER BY id",
@@ -111,15 +121,16 @@ def vuelta(conn, tb) -> int:
             " coalesce(trim(u.nombre || ' ' || coalesce(u.apellido, '')), s.uid_hex) AS persona,"
             " coalesce(u.rol, '') AS rol FROM sesiones s LEFT JOIN usuarios u ON u.id = s.usuario_id"
             " WHERE s.hora_inicio > %s OR s.estado = 'EN_CURSO'", (desde,)).fetchall():
-        previo = _sesiones.get(s["id"])
+        clave = (s["id"], _ms(s["hora_inicio"]))
+        previo = _sesiones.get(clave)
         if previo is None:
             pub(s["ubicacion_id"], _ms(s["hora_inicio"]), sesion=1, sesion_nueva=1,
                 sesion_usuario=s["persona"], sesion_rol=s["rol"].capitalize(),
                 sesion_inicio=_ms(s["hora_inicio"]))
-            _sesiones[s["id"]] = "EN_CURSO"
-        if s["hora_fin"] and _sesiones.get(s["id"]) != "CERRADA":
+            _sesiones[clave] = "EN_CURSO"
+        if s["hora_fin"] and _sesiones.get(clave) != "CERRADA":
             pub(s["ubicacion_id"], _ms(s["hora_fin"]), sesion=0, fin_sesion=s["motivo_cierre"] or "")
-            _sesiones[s["id"]] = "CERRADA"
+            _sesiones[clave] = "CERRADA"
 
     ahora = time.time()
     for item in [x for x in _limpiar if x[0] <= ahora]:
