@@ -37,6 +37,12 @@ LOTE = int(os.environ.get("EMATP_LOTE", "20"))
 ESPERA_BASE_S = int(os.environ.get("EMATP_ESPERA_BASE_S", "60"))
 ESPERA_MAX_S = int(os.environ.get("EMATP_ESPERA_MAX_S", "1800"))
 
+# Período de gracia para APERTURA_SIN_CREDENCIAL. Si es el ingreso de alguien
+# con tarjeta, el acceso CONCEDIDO llega enseguida y la anula (ver
+# ReconciliarApertura en el motor). Sin esta espera, la alarma falsa saldría a
+# EMATP antes de poder anularla — y eso ya generó tickets falsos.
+GRACIA_APERTURA_S = int(os.environ.get("PANOL_GRACIA_APERTURA_S", "20"))
+
 # Después de esto se deja de insistir y la alarma queda visible como no enviada.
 # Con la espera creciente, 24 intentos son más de diez horas.
 MAX_REINTENTOS = int(os.environ.get("EMATP_MAX_REINTENTOS", "24"))
@@ -95,6 +101,9 @@ def pendientes(conn, limite: int = LOTE) -> list[dict]:
                timestamp, reintentos
         FROM alarmas
         WHERE NOT enviada_ematp
+          AND anulada IS NULL
+          AND NOT (codigo = 'APERTURA_SIN_CREDENCIAL'
+                   AND timestamp > now() - make_interval(secs => %s))
           AND reintentos < %s
           -- Espera creciente entre intentos: 1, 2, 4… minutos, con techo.
           AND (ultimo_intento IS NULL
@@ -103,7 +112,7 @@ def pendientes(conn, limite: int = LOTE) -> list[dict]:
         ORDER BY timestamp
         LIMIT %s
         """,
-        (MAX_REINTENTOS, ESPERA_BASE_S, ESPERA_MAX_S, limite),
+        (GRACIA_APERTURA_S, MAX_REINTENTOS, ESPERA_BASE_S, ESPERA_MAX_S, limite),
     ).fetchall()
 
 

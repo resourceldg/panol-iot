@@ -113,6 +113,12 @@ _CAMPOS = {
     "puerta": ("estado_reed",),
     "pir": (),
     "armario": ("armario_id",),
+    "alta_pendiente": ("uid_hex",),
+}
+
+# Campos que pueden venir y el motor usa, pero no son obligatorios.
+_OPCIONALES = {
+    "puerta": ("inicial",),
 }
 
 
@@ -128,6 +134,9 @@ def construir_evento(tipo: str, datos: dict) -> m.Evento:
     if faltantes:
         raise ValueError(f"faltan campos: {', '.join(faltantes)}")
     payload = {c: datos[c] for c in campos}
+    for c in _OPCIONALES.get(tipo, ()):
+        if c in datos:
+            payload[c] = datos[c]
     if "modo_degradado" in datos:
         payload["modo_degradado"] = datos["modo_degradado"]
     return m.Evento(

@@ -134,8 +134,13 @@ def registrar_heartbeat(
 def estado_puerta_actual(
     conn: psycopg.Connection, ubicacion_id: str
 ) -> tuple[str | None, datetime | None]:
-    """Último estado del reed y desde cuándo. El reed solo reporta cambios,
-    así que el último evento ABIERTO marca cuándo empezó a estar abierta."""
+    """Último estado del reed y desde cuándo está así.
+
+    "Desde cuándo" es la PRIMERA apertura después del último cierre, no el
+    último evento: al reiniciar, el nodo reporta el estado inicial (ABIERTO
+    otra vez) y eso no es una apertura nueva. Si se tomara el último evento,
+    cada reinicio reiniciaría el reloj de PUERTA_ABIERTA_PROLONGADA (la alarma
+    se demoraría) y desarmaría su one-shot (volvería a alarmar por reinicio)."""
     fila = conn.execute(
         "SELECT estado_reed, timestamp FROM eventos_puerta"
         " WHERE ubicacion_id = %s ORDER BY timestamp DESC, id DESC LIMIT 1",
@@ -143,7 +148,16 @@ def estado_puerta_actual(
     ).fetchone()
     if not fila:
         return None, None
-    return fila["estado_reed"], fila["timestamp"]
+    if fila["estado_reed"] != "ABIERTO":
+        return fila["estado_reed"], fila["timestamp"]
+    desde = conn.execute(
+        "SELECT min(timestamp) AS desde FROM eventos_puerta"
+        " WHERE ubicacion_id = %s AND estado_reed = 'ABIERTO'"
+        "   AND timestamp > coalesce((SELECT max(timestamp) FROM eventos_puerta"
+        "        WHERE ubicacion_id = %s AND estado_reed = 'CERRADO'), '-infinity')",
+        (ubicacion_id, ubicacion_id),
+    ).fetchone()["desde"]
+    return "ABIERTO", desde
 
 
 def alarma_existe_desde(
@@ -368,6 +382,51 @@ def _aplicar_uno(conn: psycopg.Connection, e) -> None:
         conn.execute(
             "UPDATE sesiones SET alarmada_puerta_abierta = %s WHERE id = %s",
             (e.valor, e.sesion_id),
+        )
+
+    elif isinstance(e, m.ReconciliarApertura):
+        # La sesión que acaba de nacer (o reanudarse) en esta transacción.
+        fila = conn.execute(
+            "SELECT id FROM sesiones WHERE ubicacion_id = %s AND estado = 'EN_CURSO'"
+            " ORDER BY hora_inicio DESC LIMIT 1",
+            (e.ubicacion_id,),
+        ).fetchone()
+        if fila is None:
+            return
+        desde = e.ts - timedelta(seconds=e.ventana_s)
+        # La apertura que confirmó el ingreso es de quien entró, no "sin sesión"
+        # ni de la persona anterior (relevo).
+        conn.execute(
+            "UPDATE eventos_puerta SET sesion_id = %s"
+            " WHERE ubicacion_id = %s AND estado_reed = 'ABIERTO'"
+            "   AND timestamp BETWEEN %s AND %s"
+            "   AND sesion_id IS DISTINCT FROM %s",
+            (fila["id"], e.ubicacion_id, desde, e.ts, fila["id"]),
+        )
+        # Y la alarma de "apertura sin credencial" era falsa. Solo se anula si
+        # todavía no salió a EMATP (el emisor espera un período de gracia).
+        conn.execute(
+            "UPDATE alarmas SET anulada = now(), sesion_id = %s"
+            " WHERE ubicacion_id = %s AND codigo = 'APERTURA_SIN_CREDENCIAL'"
+            "   AND timestamp BETWEEN %s AND %s"
+            "   AND NOT enviada_ematp AND anulada IS NULL",
+            (fila["id"], e.ubicacion_id, desde, e.ts),
+        )
+
+    elif isinstance(e, m.RegistrarAltaPendiente):
+        # Si la tarjeta ya está activa, no hay nada que aprobar.
+        activa = conn.execute(
+            "SELECT 1 FROM credenciales WHERE uid_hex = %s AND activa", (e.uid_hex,)
+        ).fetchone()
+        if activa:
+            return
+        conn.execute(
+            "INSERT INTO credenciales_pendientes"
+            " (uid_hex, ubicacion_id, nodo_id, primera_vez, ultima_vez)"
+            " VALUES (%s, %s, %s, %s, %s)"
+            " ON CONFLICT (uid_hex) DO UPDATE SET ultima_vez = EXCLUDED.ultima_vez,"
+            "   veces = credenciales_pendientes.veces + 1",
+            (e.uid_hex, e.ubicacion_id, e.nodo_id, e.ts, e.ts),
         )
 
     elif isinstance(e, m.MarcarInconsistente):

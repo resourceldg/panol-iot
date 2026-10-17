@@ -39,6 +39,7 @@ T0 = datetime(2026, 7, 21, 9, 0, 0, tzinfo=repositorio.TZ)
 # Orden inverso a las dependencias: TRUNCATE ... CASCADE se encarga igual,
 # pero listarlas explícitas documenta el modelo.
 TABLAS = (
+    "credenciales_pendientes",
     "eventos_procesados",
     "alarmas",
     "eventos_armario",
@@ -860,3 +861,141 @@ class TestRetencion(BaseEscenario):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+def _seg(minutos, segundos):
+    return en(minutos) + timedelta(seconds=segundos)
+
+
+class TestOrdenRealDelNodo(BaseEscenario):
+    """El nodo reporta la apertura del reed y el acceso CONCEDIDO casi juntos,
+    y un firmware viejo (o el segundo del reloj cortado) manda la PUERTA antes
+    que el ACCESO. Estos son los casos que se vieron en producción el 17/10."""
+
+    def puerta_inicial(self, estado, ts):
+        return self._ingerir("puerta", ts, estado_reed=estado, inicial=True)
+
+    def apertura(self):
+        return self.conn.execute(
+            "SELECT sesion_id FROM eventos_puerta WHERE estado_reed = 'ABIERTO' ORDER BY id"
+        ).fetchall()
+
+    def test_puerta_antes_que_acceso_no_deja_alarma_ni_apertura_huerfana(self):
+        """00:25 del 17/10: ABIERTO 1 s antes del CONCEDIDO."""
+        self.puerta("ABIERTO", _seg(0, 0))
+        self.ingresa(ANA, _seg(0, 1))
+        alarma = self.alarmas()[0]
+        self.assertEqual(alarma["codigo"], "APERTURA_SIN_CREDENCIAL")
+        self.assertIsNotNone(alarma["anulada"], "era el ingreso de Ana: alarma anulada")
+        self.assertEqual(self.apertura()[0]["sesion_id"], self.activa().id)
+
+    def test_relevo_la_apertura_es_de_quien_entra(self):
+        """00:44 del 17/10: la apertura quedaba a nombre de la sesión anterior."""
+        self.ingresa(ANA, en(0))
+        self.puerta("CERRADO", en(1))
+        self.puerta("ABIERTO", _seg(10, 0))
+        self.ingresa(BETO, _seg(10, 1))
+        self.assertEqual(self.activa().uid_hex, BETO)
+        self.assertEqual(self.apertura()[-1]["sesion_id"], self.activa().id)
+
+    def test_orden_correcto_atribuye_sin_alarma(self):
+        """Firmware nuevo: ACCESO y después PUERTA, mismo segundo."""
+        self.ingresa(ANA, _seg(0, 0))
+        self.puerta("ABIERTO", _seg(0, 0))
+        self.assertEqual(self.codigos_alarma(), [])
+        self.assertEqual(self.apertura()[0]["sesion_id"], self.activa().id)
+
+    def test_apertura_sin_tarjeta_sigue_alarmando(self):
+        self.puerta("ABIERTO", en(0))
+        alarma = self.alarmas()[0]
+        self.assertEqual(alarma["codigo"], "APERTURA_SIN_CREDENCIAL")
+        self.assertIsNone(alarma["anulada"])
+
+    def test_acceso_fuera_de_la_ventana_no_anula(self):
+        """Alguien abrió sin tarjeta y MEDIO MINUTO después otro pasó la suya:
+        la apertura forzada no se borra."""
+        self.puerta("ABIERTO", _seg(0, 0))
+        self.ingresa(ANA, _seg(0, 30))
+        self.assertIsNone(self.alarmas()[0]["anulada"])
+        self.assertIsNone(self.apertura()[0]["sesion_id"])
+
+    def test_alarma_ya_enviada_no_se_anula(self):
+        self.puerta("ABIERTO", _seg(0, 0))
+        self.conn.execute("UPDATE alarmas SET enviada_ematp = TRUE")
+        self.ingresa(ANA, _seg(0, 1))
+        self.assertIsNone(self.alarmas()[0]["anulada"])
+
+    def test_reanudacion_tambien_reconcilia(self):
+        self.ingresa(ANA, en(0))
+        self.tarea_ausencia(en(20))                    # cerrada por ausencia
+        self.puerta("ABIERTO", _seg(30, 0))
+        self.ingresa(ANA, _seg(30, 1))                 # vuelve: reanuda
+        self.assertEqual(len(self.sesiones()), 1)
+        self.assertIsNotNone(self.alarmas()[0]["anulada"])
+
+    # --- Estado inicial al arrancar el nodo ------------------------------
+
+    def test_inicial_abierta_que_ya_estaba_abierta_no_alarma(self):
+        self.puerta("ABIERTO", en(0))                  # alarma legítima
+        self.puerta_inicial("ABIERTO", en(5))          # reinicio: sigue abierta
+        self.assertEqual(self.codigos_alarma(), ["APERTURA_SIN_CREDENCIAL"])
+
+    def test_inicial_abierta_que_estaba_cerrada_alarma(self):
+        """Se abrió con el nodo apagado: eso sí es una apertura no vista."""
+        self.puerta("CERRADO", en(0))
+        self.puerta_inicial("ABIERTO", en(5))
+        self.assertEqual(self.codigos_alarma(), ["APERTURA_SIN_CREDENCIAL"])
+
+    def test_inicial_sin_historia_no_alarma(self):
+        self.puerta_inicial("ABIERTO", en(0))
+        self.assertEqual(self.codigos_alarma(), [])
+
+    def test_inicial_no_cuenta_como_actividad(self):
+        """Un reinicio por corte de luz no prueba que haya alguien."""
+        self.ingresa(ANA, en(0))
+        self.puerta_inicial("CERRADO", en(14))
+        self.tarea_ausencia(en(16))
+        self.assertIsNone(self.activa(), "cerrada por ausencia a pesar del reinicio")
+
+    def test_reinicio_no_corre_el_reloj_de_puerta_abierta(self):
+        self.ingresa(ANA, en(0))
+        self.puerta("ABIERTO", en(1))
+        self.puerta_inicial("ABIERTO", en(4))          # reinicio con la puerta abierta
+        self._tiempo_congelado(en(7))                  # 6 min desde la apertura real
+        servicio.verificar_puertas_abiertas(self.conn, self.cfg)
+        self.assertIn("PUERTA_ABIERTA_PROLONGADA", self.codigos_alarma())
+        self.puerta_inicial("ABIERTO", en(8))          # otro reinicio
+        self._tiempo_congelado(en(15))
+        servicio.verificar_puertas_abiertas(self.conn, self.cfg)
+        prolongadas = [c for c in self.codigos_alarma() if c == "PUERTA_ABIERTA_PROLONGADA"]
+        self.assertEqual(len(prolongadas), 1, "el reinicio no rearma el one-shot")
+
+
+TestOrdenRealDelNodo._tiempo_congelado = TestPuertaAbiertaProlongada._tiempo_congelado
+
+
+class TestAltasPendientes(BaseEscenario):
+    """Tarjetas grabadas con el botón: quedan pendientes, no abren."""
+
+    def alta(self, uid, ts):
+        return self._ingerir("alta_pendiente", ts, uid_hex=uid)
+
+    def pendientes(self):
+        return self.conn.execute("SELECT * FROM credenciales_pendientes ORDER BY uid_hex").fetchall()
+
+    def whitelist(self):
+        return [f["uid_hex"] for f in self.conn.execute(
+            "SELECT uid_hex FROM credenciales WHERE activa ORDER BY uid_hex").fetchall()]
+
+    def test_queda_pendiente_y_no_entra_en_la_whitelist(self):
+        self.alta("0D:E5:00:BD", en(0))
+        self.alta("0D:E5:00:BD", en(5))
+        p = self.pendientes()
+        self.assertEqual([x["uid_hex"] for x in p], ["0D:E5:00:BD"])
+        self.assertEqual(p[0]["veces"], 2)
+        self.assertNotIn("0D:E5:00:BD", self.whitelist())
+
+    def test_una_tarjeta_ya_activa_no_queda_pendiente(self):
+        self.conn.execute("INSERT INTO credenciales (uid_hex, activa) VALUES (%s, TRUE)", (ANA,))
+        self.alta(ANA, en(0))
+        self.assertEqual(self.pendientes(), [])
