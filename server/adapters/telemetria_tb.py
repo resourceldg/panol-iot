@@ -13,6 +13,8 @@ y lo publica en el dispositivo de ThingsBoard de cada ubicación
 Es el contrato de proyectos/panol-lab01 (repo homelab). Solo lee la base.
 """
 import time
+import urllib.error
+import urllib.parse
 from datetime import timedelta
 
 from db import repositorio
@@ -45,7 +47,12 @@ def _nuevos(conn, tabla, columnas):
 def _dispositivo(tb, ubicacion):
     nombre = "panol/" + ubicacion.replace("panol-", "").upper()
     if nombre not in _dispositivos:
-        r = tb.req("GET", "/api/tenant/devices?deviceName=" + nombre)
+        try:
+            r = tb.req("GET", "/api/tenant/devices?deviceName=" + urllib.parse.quote(nombre))
+        except urllib.error.HTTPError as e:
+            if e.code != 404:              # ThingsBoard responde 404 si no existe
+                raise
+            r = None
         if not r:
             perfiles = tb.req("GET", "/api/deviceProfiles?pageSize=100&page=0&textSearch=panol")["data"]
             perfil = next((p for p in perfiles if p["name"] == "panol"), None)
