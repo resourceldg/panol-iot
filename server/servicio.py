@@ -20,7 +20,7 @@ _ATRIBUIDOS_POR_TIMESTAMP = {"puerta", "pir", "armario"}
 
 
 def ingerir(
-    conn, evento: m.Evento, cfg: m.Config | None = None
+    conn, evento: m.Evento, cfg: m.Config | None = None, via: str | None = None
 ) -> list:
     """Procesa un evento y devuelve los efectos aplicados.
 
@@ -38,7 +38,7 @@ def ingerir(
     efectos = _sin_escrituras_inutiles(sesion, decidir(evento, sesion, cfg), cfg)
 
     try:
-        repositorio.aplicar(conn, efectos, evento)
+        repositorio.aplicar(conn, efectos, evento, via=via)
     except psycopg.errors.UniqueViolation:
         # Carrera entre los DOS procesos que ingieren (la api por HTTP y el
         # puente por MQTT): los dos ven "no procesado" y los dos aplican. El

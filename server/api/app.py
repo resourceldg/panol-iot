@@ -201,7 +201,7 @@ def evento(tipo: str):
         app.logger.warning("RECHAZADO %s (%d): %s", tipo, codigo, e)
         return jsonify({"ok": False, "error": str(e)}), codigo
 
-    efectos = servicio.ingerir(conn(), ev)
+    efectos = servicio.ingerir(conn(), ev, via="http")
     app.logger.info("[%s] %-8s %s", ev.ubicacion_id, tipo, resumen_efectos(efectos))
     return jsonify(
         {
@@ -228,7 +228,7 @@ def eventos_en_lote():
     for sobre in sobres:
         tipo, datos = aplanar_sobre(sobre)
         try:
-            servicio.ingerir(conn(), construir_evento(tipo, datos))
+            servicio.ingerir(conn(), construir_evento(tipo, datos), via="http")
             confirmados.append(sobre.get("event_id"))
         except Exception as e:
             # Un evento malo no debe frenar la sincronización de los demás.

@@ -315,6 +315,18 @@ class TestResilencia(BaseEscenario):
         self.assertEqual(efectos, [], "el reenvío no debe producir efectos")
         self.assertEqual(len(self.sesiones()), 1, "no debe relevarse a sí misma")
 
+    def test_9c_registra_hora_original_y_transporte(self):
+        """Cada evento procesado guarda cuándo ocurrió en el nodo y por dónde
+        llegó: recibido - ocurrido es la demora que vigila Grafana."""
+        evento = m.Evento(tipo="pir", ubicacion_id=LAB01, ts=en(0),
+                          event_id="nodo-1-7", nodo_id=f"{LAB01}-puerta")
+        servicio.ingerir(self.conn, evento, self.cfg, via="mqtt")
+        fila = self.conn.execute(
+            "SELECT ocurrido, via FROM eventos_procesados WHERE event_id = 'nodo-1-7'"
+        ).fetchone()
+        self.assertEqual(fila["ocurrido"], en(0))
+        self.assertEqual(fila["via"], "mqtt")
+
     def test_9b_idempotencia_de_armario(self):
         """Sin esto, un reenvío contaría dos veces la apertura de un armario."""
         self.ingresa(ANA, en(0))
