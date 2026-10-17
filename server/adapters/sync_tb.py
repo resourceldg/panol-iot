@@ -21,7 +21,8 @@ valida (persona activa, tarjeta no duplicada...) igual que en la terminal.
 
     TB_URL=http://thingsboard:8080 TB_USUARIO=... TB_CLAVE=... \\
         python -m adapters.sync_tb            # una vuelta
-        python -m adapters.sync_tb --loop     # servicio
+        python -m adapters.sync_tb --loop     # servicio (también la telemetría
+                                              # del tablero del pañol: telemetria_tb.py)
 """
 import json
 import os
@@ -36,12 +37,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import credenciales as cred
+from adapters import telemetria_tb
 from db import repositorio
 
 TB_URL = os.environ.get("TB_URL", "").rstrip("/")
 TB_USUARIO = os.environ.get("TB_USUARIO", "")
 TB_CLAVE = os.environ.get("TB_CLAVE", "")
 INTERVALO_S = int(os.environ.get("SYNC_TB_INTERVALO_S", "10"))
+# La telemetría del tablero del pañol va más seguido: es lo que se ve en vivo.
+INTERVALO_TELEMETRIA_S = int(os.environ.get("SYNC_TB_INTERVALO_TELEMETRIA_S", "2"))
 TIPO = "tarjeta-panol"
 ASSET_PERSONAS = "panol-personas"
 # Rechazadas y bajas se muestran un tiempo (para ver qué pasó) y después salen.
@@ -219,17 +223,24 @@ def main(argv=None):
     if "--loop" not in argv:
         print(vuelta(conn, tb))
         return
-    log("arrancado. ThingsBoard:", TB_URL, "| cada", INTERVALO_S, "s")
+    log("arrancado. ThingsBoard:", TB_URL, "| credenciales cada", INTERVALO_S,
+        "s, telemetría cada", INTERVALO_TELEMETRIA_S, "s")
+    ultima_cred = 0
     while True:
         try:
-            r = vuelta(conn, tb)
-            if any(r.values()):
-                log(r)
+            n = telemetria_tb.vuelta(conn, tb)
+            if n:
+                log("telemetría:", n, "eventos")
+            if time.time() - ultima_cred >= INTERVALO_S:
+                ultima_cred = time.time()
+                r = vuelta(conn, tb)
+                if any(r.values()):
+                    log(r)
         except Exception as e:                # TB o la base caídos: reintentar
             log("error:", repr(e))
             if getattr(conn, "closed", False):
                 conn = repositorio.conectar(os.environ.get("PANOL_DSN"))
-        time.sleep(INTERVALO_S)
+        time.sleep(INTERVALO_TELEMETRIA_S)
 
 
 if __name__ == "__main__":
