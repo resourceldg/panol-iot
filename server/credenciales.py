@@ -23,15 +23,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from db import repositorio
 
 
-def _uid(texto: str) -> str:
+class ErrorCredencial(Exception):
+    """Pedido inválido (UID mal escrito, persona inexistente, ya activa...).
+    El CLI lo muestra y termina; el sincronizador de ThingsBoard lo devuelve
+    como resultado de la acción, sin morir."""
+
+
+def normalizar_uid(texto: str) -> str:
     """Normaliza a AA:BB:CC:DD (como lo reporta el nodo)."""
-    limpio = texto.replace(":", "").replace("-", "").strip().upper()
+    limpio = str(texto).replace(":", "").replace("-", "").strip().upper()
     if len(limpio) != 8 or any(c not in "0123456789ABCDEF" for c in limpio):
-        sys.exit(f"UID inválido: {texto!r} (se espera AA:BB:CC:DD)")
+        raise ErrorCredencial(f"UID inválido: {texto!r} (se espera AA:BB:CC:DD)")
     return ":".join(limpio[i:i + 2] for i in range(0, 8, 2))
 
 
-def _usuario(conn, texto: str) -> dict:
+def buscar_usuario(conn, texto: str) -> dict:
+    texto = str(texto).strip()
     if texto.isdigit():
         filas = conn.execute("SELECT * FROM usuarios WHERE id = %s", (int(texto),)).fetchall()
     elif "@" in texto:
@@ -42,52 +49,55 @@ def _usuario(conn, texto: str) -> dict:
             "SELECT * FROM usuarios WHERE lower(trim(nombre || ' ' || coalesce(apellido, '')))"
             " = lower(trim(%s))", (texto,)).fetchall()
     if len(filas) != 1:
-        sys.exit(f"usuario {texto!r}: {len(filas)} coincidencias (usar el id o el email)")
+        raise ErrorCredencial(f"persona {texto!r}: {len(filas)} coincidencias (usar el email)")
     if not filas[0]["activo"]:
-        sys.exit(f"usuario {texto!r} está inactivo")
+        raise ErrorCredencial(f"persona {texto!r} está inactiva")
     return filas[0]
 
 
-def activas(conn):
-    for f in conn.execute(
-            "SELECT c.uid_hex, c.alta, coalesce(u.nombre || ' ' || coalesce(u.apellido, ''), '—') AS persona"
-            " FROM credenciales c LEFT JOIN usuarios u ON u.id = c.usuario_id"
-            " WHERE c.activa ORDER BY persona").fetchall():
-        print(f"{f['uid_hex']}  {f['persona']:<30}  alta {f['alta'] or '—'}")
+def listar_activas(conn) -> list[dict]:
+    return conn.execute(
+        "SELECT c.uid_hex, c.alta, u.id AS usuario_id, u.email,"
+        " trim(coalesce(u.nombre, '') || ' ' || coalesce(u.apellido, '')) AS persona"
+        " FROM credenciales c LEFT JOIN usuarios u ON u.id = c.usuario_id"
+        " WHERE c.activa ORDER BY persona").fetchall()
 
 
-def pendientes(conn):
-    filas = conn.execute(
-        "SELECT * FROM credenciales_pendientes WHERE rechazada IS NULL ORDER BY primera_vez").fetchall()
-    if not filas:
-        print("no hay tarjetas pendientes")
-    for f in filas:
-        print(f"{f['uid_hex']}  desde {f['primera_vez']:%d/%m %H:%M}  nodo {f['nodo_id']}"
-              f"  ({f['veces']} vez/veces)")
+def listar_pendientes(conn, incluir_rechazadas=False) -> list[dict]:
+    return conn.execute(
+        "SELECT * FROM credenciales_pendientes"
+        + ("" if incluir_rechazadas else " WHERE rechazada IS NULL")
+        + " ORDER BY primera_vez").fetchall()
 
 
-def aprobar(conn, uid: str, usuario: str):
-    u = _usuario(conn, usuario)
+def aprobar(conn, uid: str, usuario: str) -> str:
+    uid = normalizar_uid(uid)
+    u = buscar_usuario(conn, usuario)
     with conn.transaction():
         if conn.execute("SELECT 1 FROM credenciales WHERE uid_hex = %s AND activa", (uid,)).fetchone():
-            sys.exit(f"{uid} ya está activa")
+            raise ErrorCredencial(f"{uid} ya está activa")
         conn.execute("INSERT INTO credenciales (uid_hex, usuario_id, alta, activa)"
                      " VALUES (%s, %s, now(), TRUE)", (uid, u["id"]))
         conn.execute("DELETE FROM credenciales_pendientes WHERE uid_hex = %s", (uid,))
-    print(f"{uid} aprobada para {u['nombre']} {u['apellido'] or ''} (abre tras el próximo refresco)")
+    return f"{uid} aprobada para {u['nombre']} {u['apellido'] or ''}".strip()
 
 
-def rechazar(conn, uid: str):
+def rechazar(conn, uid: str) -> str:
+    uid = normalizar_uid(uid)
     n = conn.execute("UPDATE credenciales_pendientes SET rechazada = now()"
                      " WHERE uid_hex = %s AND rechazada IS NULL", (uid,)).rowcount
-    print(f"{uid}: rechazada" if n else f"{uid}: no estaba pendiente")
+    if not n:
+        raise ErrorCredencial(f"{uid} no estaba pendiente")
+    return f"{uid} rechazada"
 
 
-def baja(conn, uid: str):
+def baja(conn, uid: str) -> str:
+    uid = normalizar_uid(uid)
     n = conn.execute("UPDATE credenciales SET activa = FALSE, baja = now()"
                      " WHERE uid_hex = %s AND activa", (uid,)).rowcount
-    print(f"{uid}: dada de baja (deja de abrir tras el próximo refresco)" if n
-          else f"{uid}: no estaba activa")
+    if not n:
+        raise ErrorCredencial(f"{uid} no estaba activa")
+    return f"{uid} dada de baja"
 
 
 def main(argv=None):
@@ -96,18 +106,27 @@ def main(argv=None):
         sys.exit(__doc__)
     conn = repositorio.conectar(os.environ.get("PANOL_DSN"))
     orden, args = argv[0], argv[1:]
-    if orden == "activas":
-        activas(conn)
-    elif orden == "pendientes":
-        pendientes(conn)
-    elif orden == "aprobar" and len(args) >= 2:
-        aprobar(conn, _uid(args[0]), " ".join(args[1:]))
-    elif orden == "rechazar" and len(args) == 1:
-        rechazar(conn, _uid(args[0]))
-    elif orden == "baja" and len(args) == 1:
-        baja(conn, _uid(args[0]))
-    else:
-        sys.exit(__doc__)
+    try:
+        if orden == "activas":
+            for f in listar_activas(conn):
+                print(f"{f['uid_hex']}  {f['persona'] or '—':<30}  alta {f['alta'] or '—'}")
+        elif orden == "pendientes":
+            filas = listar_pendientes(conn)
+            if not filas:
+                print("no hay tarjetas pendientes")
+            for f in filas:
+                print(f"{f['uid_hex']}  desde {f['primera_vez']:%d/%m %H:%M}  nodo {f['nodo_id']}"
+                      f"  ({f['veces']} vez/veces)")
+        elif orden == "aprobar" and len(args) >= 2:
+            print(aprobar(conn, args[0], " ".join(args[1:])) + " (abre tras el próximo refresco)")
+        elif orden == "rechazar" and len(args) == 1:
+            print(rechazar(conn, args[0]))
+        elif orden == "baja" and len(args) == 1:
+            print(baja(conn, args[0]) + " (deja de abrir tras el próximo refresco)")
+        else:
+            sys.exit(__doc__)
+    except ErrorCredencial as e:
+        sys.exit(str(e))
 
 
 if __name__ == "__main__":
