@@ -130,6 +130,20 @@ def _siguiente_pid():
 
 # --- Socket ---------------------------------------------------------------
 
+def _direccion_ipv4(host, puerto):
+    """Primera dirección IPv4 del host. El ESP32 (MicroPython) no maneja
+    IPv6: si el DNS devuelve solo AAAA, getaddrinfo trae la entrada con la
+    dirección en None. Se pide IPv4 explícitamente y se filtra igual."""
+    try:
+        resultados = socket.getaddrinfo(host, puerto, socket.AF_INET)
+    except TypeError:            # firma sin familia (dobles de prueba)
+        resultados = socket.getaddrinfo(host, puerto)
+    for r in resultados:
+        if r[0] == getattr(socket, "AF_INET", 2) and r[-1] is not None:
+            return r[-1]
+    raise OSError("el DNS no devolvió IPv4 para " + host)
+
+
 def _envolver_tls(crudo, host):
     """TLS con SNI (Funnel elige el destino por el nombre) y, si se puede,
     verificando el certificado contra las raices de Let's Encrypt."""
@@ -145,8 +159,10 @@ def _envolver_tls(crudo, host):
         if ca:
             ctx.verify_mode = ssl.CERT_REQUIRED
             ctx.load_verify_locations(cadata=ca)
+            ca = None
         else:
             ctx.verify_mode = ssl.CERT_NONE
+        gc.collect()   # el handshake necesita un bloque grande y contiguo
         return ctx.wrap_socket(crudo, server_hostname=host)
     return ssl.wrap_socket(crudo, server_hostname=host)
 
@@ -214,7 +230,7 @@ def _conectar(ahora):
     gc.collect()   # el handshake TLS necesita un bloque grande de heap contiguo
     inicio = ticks_ms()
     try:
-        direccion = socket.getaddrinfo(config.MQTT_HOST, config.MQTT_PORT)[0][-1]
+        direccion = _direccion_ipv4(config.MQTT_HOST, config.MQTT_PORT)
         _crudo = socket.socket()
         _crudo.settimeout(config.T_CONEXION_MQTT_S)
         _crudo.connect(direccion)

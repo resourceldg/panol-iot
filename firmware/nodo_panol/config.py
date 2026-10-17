@@ -112,7 +112,11 @@ except ImportError:
     MQTT_PASS = ""
 MQTT_KEEPALIVE_S = 60             # PINGREQ si no hubo trafico en 30 s
 MQTT_VERIFICAR_TLS = True         # verificar el certificado (necesita hora NTP)
-ARCHIVO_CA = "ca_letsencrypt.pem"   # raices ISRG X1 y X2 (Let's Encrypt)
+# Raiz ISRG X2 en DER (543 bytes, vence en 2040). Los certificados de
+# Tailscale son ECDSA y encadenan a X2 (Let's Encrypt YE2 -> Root YE -> X2).
+# En DER y una sola: con X1+X2 en PEM, el ESP32 se quedaba sin memoria al
+# parsear (MBEDTLS_ERR_X509_ALLOC_FAILED).
+ARCHIVO_CA = "ca_isrg_x2.der"
 T_CONEXION_MQTT_S = 10            # tope del handshake TCP+TLS al (re)conectar
 T_ESCRITURA_MQTT_S = 2            # tope para escribir un paquete
 T_REINTENTO_MQTT_MAX_MS = 30_000  # backoff de reconexion: 1, 2, 4 ... 30 s

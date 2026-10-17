@@ -144,7 +144,8 @@ def cargar(**ajustes):
     """Carga enlace.py con dobles de socket, ssl, config, cola y reloj."""
     ticks = Ticks()
     broker = Broker()
-    entorno = types.SimpleNamespace(sin_red=False, hora=True, cola=[], confirmados=[])
+    entorno = types.SimpleNamespace(sin_red=False, hora=True, cola=[], confirmados=[],
+                                    solo_ipv6=False)
 
     config = types.SimpleNamespace(
         MQTT_HOST="panol.ejemplo.ts.net", MQTT_PORT=443, MQTT_USER="nodo-panol-puerta",
@@ -165,7 +166,14 @@ def cargar(**ajustes):
     cola = types.SimpleNamespace(pendientes=pendientes, confirmar=confirmar,
                                  largo=lambda: len(entorno.cola))
     reloj = types.SimpleNamespace(sincronizado=lambda: entorno.hora)
-    socket = types.SimpleNamespace(getaddrinfo=lambda h, p: [(0, 0, 0, "", ("1.2.3.4", p))],
+    def getaddrinfo(h, p, familia=0):
+        # Como el DNS real del router: puede venir primero (o solo) IPv6,
+        # que MicroPython en el ESP32 entrega con la dirección en None.
+        res = [(10, 1, 0, h, None)]
+        if not entorno.solo_ipv6:
+            res.append((2, 1, 0, h, ("1.2.3.4", p)))
+        return [r for r in res if not familia or r[0] == familia]
+    socket = types.SimpleNamespace(getaddrinfo=getaddrinfo, AF_INET=2,
                                    socket=lambda: Crudo(entorno))
     ssl = types.SimpleNamespace(wrap_socket=lambda crudo, server_hostname=None: Tls(crudo, broker))
 
@@ -297,6 +305,18 @@ class PruebaEnlace(unittest.TestCase):
         e.hora = True
         self.correr(m, t, 0.2)
         self.assertEqual(b.conexiones, 1)
+
+    def test_usa_ipv4_aunque_el_dns_devuelva_ipv6_primero(self):
+        m, b, e, t = cargar()
+        self.correr(m, t, 0.1)
+        self.assertTrue(m.conectado())
+
+    def test_solo_ipv6_no_conecta_y_lo_dice(self):
+        m, b, e, t = cargar()
+        e.solo_ipv6 = True
+        self.correr(m, t, 1)
+        self.assertFalse(m.conectado())
+        self.assertIn("IPv4", m.estado()["error"])
 
     def test_lote_respeta_la_ventana(self):
         m, b, e, t = cargar(VENTANA_MQTT=3)
