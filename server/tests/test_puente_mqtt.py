@@ -210,3 +210,56 @@ class TestPuenteMQTT(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestWhitelistPorMQTT(unittest.TestCase):
+    """El puente publica a cada nodo la lista de tarjetas activas, retenida,
+    solo cuando cambia: una aprobación o baja le llega al nodo en segundos."""
+
+    class Cliente(ClienteFalso):
+        def publish(self, topic, payload=None, qos=0, retain=False):
+            super().publish(topic, payload, qos, retain)
+            return type("Info", (), {"rc": 0})()
+
+        def subscribe(self, *args, **kwargs):
+            pass
+
+    def setUp(self):
+        self.conn = repositorio.conectar(os.environ.get("PANOL_DSN"))
+        repositorio.inicializar(self.conn)
+        self.conn.execute("TRUNCATE %s RESTART IDENTITY CASCADE" % ", ".join(TABLAS))
+        repositorio.registrar_heartbeat(self.conn, nodo_id=NODO, ubicacion_id=LAB01, rol="puerta")
+        self.conn.execute("INSERT INTO credenciales (uid_hex, activa) VALUES (%s, TRUE), (%s, TRUE)",
+                          ("CF:8C:11:0E", ANA))
+        puente_mqtt._whitelists.clear()
+        self.cliente = self.Cliente()
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_publica_retenida_ordenada_al_nodo(self):
+        puente_mqtt.publicar_whitelists(self.cliente, self.conn)
+        p = self.cliente.publicados
+        self.assertEqual(len(p), 1)
+        self.assertEqual(p[0]["topic"], f"panol/{LAB01}/{NODO}/cmd/whitelist")
+        self.assertTrue(p[0]["retain"])
+        self.assertEqual(p[0]["qos"], 1)
+        self.assertEqual(json.loads(p[0]["payload"])["uids"], [ANA, "CF:8C:11:0E"])
+
+    def test_no_repite_si_no_cambio(self):
+        puente_mqtt.publicar_whitelists(self.cliente, self.conn)
+        puente_mqtt.publicar_whitelists(self.cliente, self.conn)
+        self.assertEqual(len(self.cliente.publicados), 1)
+
+    def test_una_baja_se_publica_enseguida(self):
+        puente_mqtt.publicar_whitelists(self.cliente, self.conn)
+        self.conn.execute("UPDATE credenciales SET activa = FALSE WHERE uid_hex = %s", (ANA,))
+        puente_mqtt.publicar_whitelists(self.cliente, self.conn)
+        self.assertEqual(json.loads(self.cliente.publicados[-1]["payload"])["uids"], ["CF:8C:11:0E"])
+
+    def test_al_reconectar_vuelve_a_publicar(self):
+        puente_mqtt.publicar_whitelists(self.cliente, self.conn)
+        puente_mqtt.al_conectar(self.cliente, None, None, 0)
+        puente_mqtt.publicar_whitelists(self.cliente, self.conn)
+        wl = [p for p in self.cliente.publicados if p["topic"].endswith("/cmd/whitelist")]
+        self.assertEqual(len(wl), 2)

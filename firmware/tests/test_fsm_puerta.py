@@ -190,6 +190,19 @@ class PruebaFsm(unittest.TestCase):
         s.correr(30, {10: s.puerta(True)})
         self.assertEqual(s.resumen(), [("puerta", "ABIERTO")])
 
+    def test_rechazo_parpadea_el_led_y_despues_lo_apaga(self):
+        s = Sim()
+        led = s.cfg.PIN_LED_ACCESO
+        estados = []
+        guion = juntar((5, s.tarjeta("11:22:33:44")), (8, s.sin_tarjeta()))
+        for v in range(7, 40):
+            guion = juntar(*[(k, f) for k, f in guion.items()],
+                           (v, (lambda: estados.append(Pin.valores.get(led, 0)))))
+        s.correr(40, guion)
+        cambios = sum(1 for a, b in zip(estados, estados[1:]) if a != b)
+        self.assertGreaterEqual(cambios, 4, "tiene que parpadear (prender/apagar varias veces)")
+        self.assertEqual(Pin.valores[led], 0, "y quedar apagado")
+
     def test_el_uid_de_prueba_ya_no_abre(self):
         s = Sim()
         s.correr(30, juntar((5, s.tarjeta("DE:AD:BE:EF")), (8, s.sin_tarjeta())))

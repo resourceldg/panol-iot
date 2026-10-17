@@ -242,6 +242,8 @@ _pir_ultimo_ms = None      # Ultimo movimiento reportado (para el throttle)
 _ultimo_uid = None
 _ultimo_uid_ms = 0
 
+_parpadeo_desde = None     # rechazo: el LED de acceso parpadea (sin bloquear)
+
 
 def poll_reed(ahora):
     """Reporta cambios estables del reed. Corre en cualquier estado.
@@ -296,6 +298,20 @@ def poll_pir(ahora):
     _pir_ultimo_ms = ahora
     log("PIR", "movimiento")
     emitir("pir")
+
+
+def atender_parpadeo(ahora):
+    """Tarjeta rechazada: 3 parpadeos del LED de acceso en ~0,9 s. Sin esto,
+    un rechazo no se distingue de "no leyo la tarjeta"."""
+    global _parpadeo_desde
+    if _parpadeo_desde is None:
+        return
+    t = ticks_diff(ahora, _parpadeo_desde)
+    if t >= config.T_PARPADEO_RECHAZO_MS:
+        led_acceso.value(0)
+        _parpadeo_desde = None
+    else:
+        led_acceso.value(1 if (t // (config.T_PARPADEO_RECHAZO_MS // 6)) % 2 == 0 else 0)
 
 
 def leer_tarjeta():
@@ -357,7 +373,7 @@ def _reportar_puerta_diferida():
 
 
 def paso_fsm(ahora):
-    global _uid_en_curso, _promesa_desde
+    global _uid_en_curso, _promesa_desde, _parpadeo_desde
 
     if estado == IDLE:
         uid = leer_tarjeta()
@@ -395,6 +411,7 @@ def paso_fsm(ahora):
             log("ACCESO", "DENEGADO", _uid_en_curso)
             emitir("acceso", uid_hex=_uid_en_curso, resultado="DENEGADO",
                    modo_degradado=red.degradado())
+            _parpadeo_desde = ahora
             _uid_en_curso = None
             ir_a(IDLE, ahora)
 
@@ -482,6 +499,7 @@ while True:
     poll_reed(ahora)
     poll_pir(ahora)
     paso_fsm(ahora)
+    atender_parpadeo(ahora)
 
     # La red se atiende SOLO en reposo. Un POST puede tardar hasta 3 s, y
     # ese timeout no puede caer en medio del pulso del solenoide ni de la

@@ -60,6 +60,7 @@ T_APERTURA_MS = 10_000        # Ventana de la "promesa": pulso -> reed abre
 T_ANTIRREBOTE_REED_MS = 300   # Estabilidad minima para reportar un cambio
 THROTTLE_PIR_MS = 30_000      # Maximo un reporte de movimiento cada 30 s
 T_MISMA_TARJETA_MS = 2_000    # Ignora la misma tarjeta repetida
+T_PARPADEO_RECHAZO_MS = 900   # Tarjeta rechazada: 3 parpadeos del LED de acceso
 T_CICLO_MS = 50               # Periodo del bucle principal
 
 # --- Robustez -------------------------------------------------------------
@@ -130,7 +131,10 @@ VENTANA_MQTT = 10                 # eventos publicados sin acuse a la vez
 # timeout por operacion, no al total) y el PIR no detecto nada en ese lapso.
 # Sin MQTT, los eventos esperan en la cola en flash y salen al reconectar.
 USAR_RESPALDO_HTTP = False
-T_RESPALDO_HTTP_MS = 120_000      # si se activa: sin MQTT por 2 min -> HTTP
+T_RESPALDO_HTTP_MS = 120_000      # sin MQTT por 2 min: whitelist (y eventos, si se activa) por HTTP
+# La whitelist llega por MQTT, retenida, apenas conecta. Si en este tiempo no
+# llego (servidor viejo que no la publica), se baja por HTTPS como antes.
+T_ESPERA_WHITELIST_MQTT_MS = 60_000
 
 # Token para autenticar contra la API cuando se llega por internet (HTTPS via
 # Caddy). En la LAN, con la API sin token, se deja vacío. Es el mismo valor que
