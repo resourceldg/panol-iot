@@ -25,7 +25,9 @@ services:
     #   - Desde afuera: HTTPS por Caddy (red `edge`), con token. Para el nodo en
     #     otra red. Ver el bloque panol-api.<dominio> del Caddyfile.
     ports:
-      - "${PANOL_API_BIND:-0.0.0.0}:18500:18500"
+      # Solo loopback: la usan Funnel (solo /api/whitelist) y Caddy, desde el
+      # propio host. En 0.0.0.0 quedaba HTTP sin cifrar para toda la LAN.
+      - "${PANOL_API_BIND:-127.0.0.1}:18500:18500"
     networks: [panol, edge]
     deploy:
       resources:
@@ -74,6 +76,24 @@ services:
     # También despacha las alarmas a EMATP. Las credenciales salen de
     # /etc/panol/app.env; sin EMATP_URL la integración queda inactiva.
     command: ["python", "planificador.py"]
+
+  # Gestión de credenciales desde ThingsBoard: publica las tarjetas como
+  # assets y aplica lo que se pide desde el tablero "Pañol · Credenciales".
+  # La base sigue siendo la fuente de verdad. `edge` para llegar a
+  # http://thingsboard:8080. Sin TB_* en app.env queda inactivo.
+  sync-tb:
+    build: ./server
+    container_name: panol-sync-tb
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    env_file: /etc/panol/app.env
+    networks: [panol, edge]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+    command: ["python", "-m", "adapters.sync_tb", "--loop"]
 
 networks:
   # La crea el stack del homelab (compose/panol/compose.yml). Acá se usa tal

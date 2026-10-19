@@ -110,6 +110,27 @@ Es un nombre fijo de internet: funciona igual con el server en cualquier red.
   (antes, con un HTTPS por envío, 5-105 s). Detalle y pruebas de corte en
   `homelab/docs/panol-iot.md`, "Entrada remota".
 
+## Quién puede entrar (credenciales)
+
+La base del pañol es la **única fuente de verdad**: el nodo solo abre con las
+tarjetas activas del servidor (las baja como whitelist cada 15 min y guarda
+copia en flash para andar sin red). Una tarjeta grabada con el botón del nodo
+llega como **pendiente** y **no abre** hasta que alguien la aprueba.
+
+- **Pantalla:** tablero **"Pañol · Credenciales"** en ThingsBoard (privado):
+  tarjetas por estado, **Aprobar** (pide el email de la persona), **Rechazar**,
+  **Dar de baja**. Lo mantiene el servicio `sync-tb`
+  (`server/adapters/sync_tb.py`), que publica cada tarjeta como asset y aplica
+  los pedidos con las mismas validaciones que la terminal.
+- **Terminal:** `docker exec -it panol-api python -m credenciales pendientes`
+  (también `activas`, `aprobar <uid> <email>`, `rechazar <uid>`, `baja <uid>`).
+
+## Grabar la placa
+
+`firmware/grabar.sh` (con Thonny cerrado): sube `main.py` y los módulos grandes
+**precompilados a `.mpy`** (compilarlos en la placa fragmenta la RAM y el TLS
+del enlace MQTT se queda sin memoria). No pisa el `config.py` de la placa.
+
 ## Topics MQTT
 
 ```
@@ -117,6 +138,7 @@ panol/<ubicacion_id>/<nodo_id>/evento/<tipo>   nodo     -> servidor
 panol/<ubicacion_id>/<nodo_id>/heartbeat       nodo     -> servidor
 panol/<ubicacion_id>/alarma/<codigo>           servidor -> Node-RED
 panol/<ubicacion_id>/sesion                    servidor -> Node-RED
+panol/<ubicacion_id>/<nodo_id>/cmd/whitelist   servidor -> nodo (retenido: tarjetas activas)
 ```
 
 Todo con QoS 1. Como "al menos una vez" admite duplicados por diseño, la idempotencia por

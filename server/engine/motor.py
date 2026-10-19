@@ -30,6 +30,8 @@ from .modelo import (
     MarcarAlarmadaPuertaAbierta,
     MarcarInconsistente,
     ReanudarSesion,
+    ReconciliarApertura,
+    RegistrarAltaPendiente,
     RegistrarAcceso,
     RegistrarArmario,
     RegistrarPir,
@@ -93,9 +95,15 @@ def _acceso(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
     # Relevo: incluso si es el MISMO UID. Una segunda pasada renueva la
     # sesión en vez de interpretarse como salida (spec §14): evita la
     # ambigüedad salida/re-ingreso, que en v1 no se puede desambiguar.
+    # La apertura del reed que confirmó este ingreso puede haberse registrado
+    # ANTES (firmware viejo, o el segundo del reloj cortado): se reconcilia
+    # con la sesión que nace acá. Va último: se aplica con la sesión ya creada.
+    reconciliar = ReconciliarApertura(evento.ubicacion_id, evento.ts, cfg.t_reconciliacion_s)
+
     if sesion is not None:
         efectos.append(FinalizarSesion(sesion.id, RELEVO, evento.ts))
         efectos.append(CrearSesion(evento.ubicacion_id, uid, evento.ts))
+        efectos.append(reconciliar)
         return efectos
 
     # Sin sesión abierta: puede ser alguien que llega… o el mismo que volvió
@@ -106,23 +114,36 @@ def _acceso(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
     reanudable = evento.datos.get("sesion_reanudable")
     if reanudable is not None:
         efectos.append(ReanudarSesion(reanudable, evento.ts))
+        efectos.append(reconciliar)
         return efectos
 
     efectos.append(CrearSesion(evento.ubicacion_id, uid, evento.ts))
+    efectos.append(reconciliar)
     return efectos
 
 
 def _puerta(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
     """Cambio del reed. Informativo: el reed NUNCA cierra una sesión."""
     estado_reed = evento.datos["estado_reed"]
+    # `inicial`: el nodo informa cómo encontró la puerta AL ARRANCAR. No hubo
+    # flanco, así que no es evidencia de presencia ni, en general, una apertura.
+    inicial = bool(evento.datos.get("inicial"))
 
     if sesion is not None:
-        return [
-            RegistrarPuerta(evento.ubicacion_id, sesion.id, estado_reed, evento.ts),
-            *_actividad(sesion, evento.ts),
-        ]
+        efectos = [RegistrarPuerta(evento.ubicacion_id, sesion.id, estado_reed, evento.ts)]
+        # Un reinicio del nodo (cortes de luz) no prueba que haya alguien: si
+        # contara como actividad, una sesión podría no cerrarse nunca por ausencia.
+        if not inicial:
+            efectos += _actividad(sesion, evento.ts)
+        return efectos
 
     efectos = [RegistrarPuerta(evento.ubicacion_id, None, estado_reed, evento.ts)]
+    # Al arrancar se alarma SOLO si la puerta cambió de CERRADA a ABIERTA con el
+    # nodo apagado (`estado_previo`, lo provee quien llama): eso sí es una
+    # apertura sin credencial que el nodo no pudo ver. Si ya estaba abierta
+    # antes del reinicio, alarmar sería un falso positivo en cada reinicio.
+    if inicial and evento.datos.get("estado_previo") != "CERRADO":
+        return efectos
     if estado_reed == "ABIERTO":
         # Se abrió sin credencial y sin pulso: forzada o con llave física.
         efectos.append(
@@ -186,6 +207,14 @@ def _armario(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
             detalle={"armario_id": armario_id},
         ),
     ]
+
+
+def _alta_pendiente(evento: Evento, sesion: Sesion | None, cfg: Config) -> list:
+    """Tarjeta grabada con el botón del nodo. NO autoriza nada: queda
+    pendiente hasta que una persona la apruebe. El servidor es la única
+    fuente de verdad de quién puede entrar (y así una baja funciona siempre)."""
+    return [RegistrarAltaPendiente(evento.ubicacion_id, evento.nodo_id,
+                                   evento.datos["uid_hex"], evento.ts)]
 
 
 # --- Tareas programadas --------------------------------------------------
@@ -340,6 +369,7 @@ _MANEJADORES = {
     "puerta": _puerta,
     "pir": _pir,
     "armario": _armario,
+    "alta_pendiente": _alta_pendiente,
     "tarea_ausencia": _tarea_ausencia,
     "tarea_puerta_abierta": _tarea_puerta_abierta,
     "tarea_fin_jornada": _tarea_fin_jornada,

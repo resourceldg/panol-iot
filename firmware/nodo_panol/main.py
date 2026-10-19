@@ -17,6 +17,7 @@ from machine import Pin, WDT
 from mfrc522 import MFRC522
 from time import sleep_ms, ticks_ms, ticks_diff
 import gc
+import os
 
 import config
 import cola
@@ -167,8 +168,13 @@ def _verificar_rc522():
 # --- Whitelist local ------------------------------------------------------
 # El nodo decide SIEMPRE contra esta lista y despues reporta. El servidor
 # nunca esta en el camino critico de abrir la puerta, asi que un corte de
-# red no demora un acceso legitimo.
-UIDS_BASE = {"DE:AD:BE:EF"}
+# red no demora un acceso legitimo (la copia vive en flash).
+#
+# La lista es SOLO la del servidor: es la unica fuente de verdad de quien
+# puede entrar, y asi una baja funciona siempre. Las tarjetas grabadas con el
+# boton quedan PENDIENTES (no abren) hasta que alguien las aprueba en el
+# servidor (`python -m credenciales aprobar`). Antes habia un UID de prueba
+# escrito aca (DE:AD:BE:EF) que abria siempre: se saco, es clonable.
 
 
 def _leer_uids(ruta, uids):
@@ -184,17 +190,9 @@ def _leer_uids(ruta, uids):
 
 
 def cargar_uids():
-    """Union de tres fuentes, en orden de menor a mayor volatilidad.
-
-    La whitelist del servidor se refresca cada 15 min y vive en su propio
-    archivo. Las tarjetas grabadas con el boton viven en uids.txt y NO se
-    pisan al refrescar: son altas hechas en el pañol, que el servidor
-    todavia no conoce.
-    """
-    uids = set(UIDS_BASE)
-    _leer_uids(config.ARCHIVO_WHITELIST, uids)
-    _leer_uids(config.ARCHIVO_UIDS, uids)
-    return uids
+    """Las tarjetas autorizadas: la whitelist del servidor (refrescada cada
+    15 min, copia en flash para funcionar sin red)."""
+    return _leer_uids(config.ARCHIVO_WHITELIST, set())
 
 
 def recargar_uids():
@@ -203,13 +201,31 @@ def recargar_uids():
     log("UIDS", len(UIDS_AUTORIZADOS), "autorizados")
 
 
-def grabar_uid(uid):
-    UIDS_AUTORIZADOS.add(uid)
+def pedir_alta(uid):
+    """Tarjeta grabada con el boton: se reporta al servidor como PENDIENTE.
+    No abre hasta que la aprueben; la cola en flash garantiza que el pedido
+    llegue aunque ahora no haya red."""
+    emitir("alta_pendiente", uid_hex=uid)
+
+
+def migrar_altas_locales():
+    """Firmware viejo: las tarjetas grabadas con el boton abrian sin pasar por
+    el servidor (uids.txt). Las que el servidor no autoriza se reportan como
+    pendientes, una sola vez, y el archivo se archiva."""
+    viejas = _leer_uids(config.ARCHIVO_UIDS, set())
+    if not viejas:
+        return
+    for uid in sorted(viejas - UIDS_AUTORIZADOS):
+        pedir_alta(uid)
     try:
-        with open(config.ARCHIVO_UIDS, "a") as f:
-            f.write(uid + "\n")
+        try:
+            os.remove(config.ARCHIVO_UIDS + ".migrado")   # littlefs no pisa en rename
+        except OSError:
+            pass
+        os.rename(config.ARCHIVO_UIDS, config.ARCHIVO_UIDS + ".migrado")
     except OSError as e:
-        log("UIDS", "no se pudo persistir:", e)
+        log("UIDS", "no se pudo archivar", config.ARCHIVO_UIDS, ":", e)
+    log("UIDS", len(viejas - UIDS_AUTORIZADOS), "altas locales reportadas como pendientes")
 
 
 UIDS_AUTORIZADOS = cargar_uids()
@@ -219,11 +235,14 @@ _reed_estable = None       # Ultimo valor ya confirmado por el antirrebote
 _reed_crudo = None         # Ultimo valor leido, aun sin confirmar
 _reed_desde = 0            # Cuando empezo a leerse _reed_crudo
 _apertura_ms = None        # ticks del ultimo flanco de apertura confirmado
+_puerta_diferida = False   # apertura que confirma un ingreso: se reporta DESPUES del acceso
 
 _pir_ultimo_ms = None      # Ultimo movimiento reportado (para el throttle)
 
 _ultimo_uid = None
 _ultimo_uid_ms = 0
+
+_parpadeo_desde = None     # rechazo: el LED de acceso parpadea (sin bloquear)
 
 
 def poll_reed(ahora):
@@ -232,7 +251,7 @@ def poll_reed(ahora):
     El antirrebote evita que un golpe o la vibracion del cierre generen una
     rafaga de eventos: hay que ver el mismo valor durante 300 ms seguidos.
     """
-    global _reed_estable, _reed_crudo, _reed_desde, _apertura_ms
+    global _reed_estable, _reed_crudo, _reed_desde, _apertura_ms, _puerta_diferida
     if reed is None:
         return
 
@@ -253,6 +272,13 @@ def poll_reed(ahora):
     if abierta:
         _apertura_ms = ahora
     log("REED", "ABIERTA" if abierta else "CERRADA")
+    # Si esta apertura es la que confirma un ingreso (tarjeta autorizada, en
+    # el pulso o la promesa), la FSM reporta PRIMERO el acceso CONCEDIDO y
+    # despues la puerta, en esta misma vuelta. Al reves, el servidor la veia
+    # "sin sesion" (alarma falsa) o a nombre de la persona anterior.
+    if abierta and estado in (PULSO, PROMESA):
+        _puerta_diferida = True
+        return
     emitir("puerta", estado_reed="ABIERTO" if abierta else "CERRADO")
 
 
@@ -272,6 +298,20 @@ def poll_pir(ahora):
     _pir_ultimo_ms = ahora
     log("PIR", "movimiento")
     emitir("pir")
+
+
+def atender_parpadeo(ahora):
+    """Tarjeta rechazada: 3 parpadeos del LED de acceso en ~0,9 s. Sin esto,
+    un rechazo no se distingue de "no leyo la tarjeta"."""
+    global _parpadeo_desde
+    if _parpadeo_desde is None:
+        return
+    t = ticks_diff(ahora, _parpadeo_desde)
+    if t >= config.T_PARPADEO_RECHAZO_MS:
+        led_acceso.value(0)
+        _parpadeo_desde = None
+    else:
+        led_acceso.value(1 if (t // (config.T_PARPADEO_RECHAZO_MS // 6)) % 2 == 0 else 0)
 
 
 def leer_tarjeta():
@@ -320,8 +360,20 @@ def ir_a(nuevo, ahora):
     _estado_desde = ahora
 
 
+def _ingreso_confirmado():
+    return _apertura_ms is not None and ticks_diff(_apertura_ms, _promesa_desde) >= 0
+
+
+def _reportar_puerta_diferida():
+    """La apertura que confirmo el ingreso, reportada DESPUES del acceso."""
+    global _puerta_diferida
+    if _puerta_diferida:
+        _puerta_diferida = False
+        emitir("puerta", estado_reed="ABIERTO")
+
+
 def paso_fsm(ahora):
-    global _uid_en_curso, _promesa_desde
+    global _uid_en_curso, _promesa_desde, _parpadeo_desde
 
     if estado == IDLE:
         uid = leer_tarjeta()
@@ -335,8 +387,8 @@ def paso_fsm(ahora):
             if uid in UIDS_AUTORIZADOS:
                 log("RFID", "ya estaba autorizada")
             else:
-                grabar_uid(uid)
-                log("RFID", "tarjeta GRABADA y autorizada")
+                pedir_alta(uid)
+                log("RFID", "tarjeta reportada: PENDIENTE de aprobacion (no abre todavia)")
             return
         _uid_en_curso = uid
         ir_a(VALIDANDO, ahora)
@@ -359,8 +411,22 @@ def paso_fsm(ahora):
             log("ACCESO", "DENEGADO", _uid_en_curso)
             emitir("acceso", uid_hex=_uid_en_curso, resultado="DENEGADO",
                    modo_degradado=red.degradado())
+            _parpadeo_desde = ahora
             _uid_en_curso = None
             ir_a(IDLE, ahora)
+
+    elif estado in (PULSO, PROMESA) and _ingreso_confirmado():
+        # La "promesa": el acceso recien crea sesion si la puerta se abre de
+        # verdad (flanco POSTERIOR al inicio del pulso). Vale tambien durante
+        # el pulso: se confirma en el acto, sin esperar a que termine.
+        log("ACCESO", "ingreso CONFIRMADO por el reed")
+        rele_soltar()          # la puerta ya se abrio: el cerrojo no hace falta
+        emitir("acceso", uid_hex=_uid_en_curso, resultado="CONCEDIDO",
+               modo_degradado=red.degradado())
+        _reportar_puerta_diferida()
+        led_acceso.value(0)
+        _uid_en_curso = None
+        ir_a(IDLE, ahora)
 
     elif estado == PULSO:
         # Pulso NO bloqueante. Con un sleep() aca el reed quedaria ciego
@@ -371,16 +437,7 @@ def paso_fsm(ahora):
             ir_a(PROMESA, ahora)
 
     elif estado == PROMESA:
-        # La "promesa": el acceso recien crea sesion si la puerta se abre
-        # de verdad. Solo cuenta un flanco POSTERIOR al inicio del pulso.
-        if _apertura_ms is not None and ticks_diff(_apertura_ms, _promesa_desde) >= 0:
-            log("ACCESO", "ingreso CONFIRMADO por el reed")
-            emitir("acceso", uid_hex=_uid_en_curso, resultado="CONCEDIDO",
-                   modo_degradado=red.degradado())
-            led_acceso.value(0)
-            _uid_en_curso = None
-            ir_a(IDLE, ahora)
-        elif ticks_diff(ahora, _promesa_desde) >= config.T_APERTURA_MS:
+        if ticks_diff(ahora, _promesa_desde) >= config.T_APERTURA_MS:
             log("ACCESO", "timeout: concedido pero SIN ingreso")
             emitir("acceso", uid_hex=_uid_en_curso, resultado="SIN_INGRESO",
                    modo_degradado=red.degradado())
@@ -418,6 +475,7 @@ gc.collect()
 if red.conectar():
     reloj.sincronizar()
     recargar_uids()
+migrar_altas_locales()
 
 # Estado inicial de la puerta, para que el servidor sincronice sin tener
 # que recordar nada de antes del corte.
@@ -441,6 +499,7 @@ while True:
     poll_reed(ahora)
     poll_pir(ahora)
     paso_fsm(ahora)
+    atender_parpadeo(ahora)
 
     # La red se atiende SOLO en reposo. Un POST puede tardar hasta 3 s, y
     # ese timeout no puede caer en medio del pulso del solenoide ni de la

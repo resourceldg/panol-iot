@@ -88,6 +88,12 @@ class Config:
     # que sigue exactamente igual de apagado. Con saberlo cada hora alcanza.
     t_recordatorio_infra_s: int = field(
         default_factory=lambda: _param("PANOL_T_RECORDATORIO_INFRA_S", 60 * 60))
+    # Ventana de reconciliación de un ingreso: una apertura del reed hasta
+    # estos segundos ANTES del acceso CONCEDIDO es la de ese ingreso (la
+    # promesa del nodo dura 10 s desde el pulso). Cubre un firmware viejo que
+    # reporta la puerta antes que el acceso, o relojes con el segundo cortado.
+    t_reconciliacion_s: int = field(
+        default_factory=lambda: _param("PANOL_T_RECONCILIACION_S", 15))
 
 
 @dataclass
@@ -209,6 +215,29 @@ class Alarma:
     @property
     def severidad(self) -> str:
         return SEVERIDADES[self.codigo]
+
+
+@dataclass
+class ReconciliarApertura:
+    """Un ingreso CONCEDIDO acaba de abrir (o reanudar) la sesión de la
+    ubicación: las aperturas del reed en [ts - ventana_s, ts] son de ese
+    ingreso. Se reasignan a la sesión vigente y se anulan las alarmas
+    APERTURA_SIN_CREDENCIAL de esa ventana que todavía no salieron a EMATP."""
+
+    ubicacion_id: str
+    ts: datetime
+    ventana_s: int
+
+
+@dataclass
+class RegistrarAltaPendiente:
+    """Tarjeta grabada con el botón del nodo: queda PENDIENTE de aprobación.
+    No abre hasta que alguien la aprueba (comando `credenciales aprobar`)."""
+
+    ubicacion_id: str
+    nodo_id: str | None
+    uid_hex: str
+    ts: datetime
 
 
 @dataclass

@@ -444,24 +444,92 @@ def tareas(ahora, al_actualizar_whitelist):
     _vaciar_cola()
 
 
+# --- Whitelist por MQTT -----------------------------------------------------
+# El servidor publica la lista RETENIDA en panol/<ubic>/<nodo>/cmd/whitelist
+# cada vez que cambia. Por la conexion persistente llega en segundos y sin
+# cortar el enlace (antes: HTTPS cada 15 min, ~9 s sin mirar los sensores).
+
+def _topic_whitelist():
+    return "panol/{}/{}/cmd/whitelist".format(config.UBICACION_ID, config.NODO_ID)
+
+
+_al_actualizar = None             # callback de main.py (recargar_uids)
+_wl_conexion = None               # conexion MQTT en la que llego la ultima lista
+
+
+def _es_uid(u):
+    partes = u.split(":") if isinstance(u, str) else []
+    return len(partes) == 4 and all(len(p) == 2 and all(c in "0123456789ABCDEF" for c in p)
+                                    for p in partes)
+
+
+def _guardar_whitelist(uids):
+    """Escritura atomica: un corte a mitad no deja una lista truncada."""
+    tmp = config.ARCHIVO_WHITELIST + ".tmp"
+    with open(tmp, "w") as f:
+        for uid in uids:
+            f.write(uid + "\n")
+    try:
+        import os
+        try:
+            os.remove(config.ARCHIVO_WHITELIST)   # littlefs: rename no pisa
+        except OSError:
+            pass
+        os.rename(tmp, config.ARCHIVO_WHITELIST)
+    except ImportError:                           # pruebas en la PC
+        pass
+
+
+def _mensaje(topic, payload):
+    global _wl_conexion, _ultima_whitelist_ms
+    if topic != _topic_whitelist():
+        return
+    import json
+    uids = json.loads(payload).get("uids")
+    if not isinstance(uids, list) or not all(_es_uid(u) for u in uids):
+        _log("whitelist por MQTT invalida: se ignora")
+        return
+    _guardar_whitelist(uids)
+    _wl_conexion = enlace.conexion_id()
+    _ultima_whitelist_ms = ticks_ms()
+    _log("whitelist por MQTT:", len(uids), "UIDs")
+    if _al_actualizar is not None:
+        _al_actualizar()
+
+
+enlace.SUSCRIPCIONES.append(_topic_whitelist())
+enlace.al_mensaje = _mensaje
+
+
+def _whitelist_por_https(ahora):
+    """Solo como respaldo: MQTT caido hace rato, o conectado pero el servidor
+    nunca mando la lista en esta conexion (servidor viejo)."""
+    if _ultima_whitelist_ms is not None and \
+            ticks_diff(ahora, _ultima_whitelist_ms) < config.T_REFRESCO_WHITELIST_MS:
+        return False
+    if enlace.conectado():
+        return (_wl_conexion != enlace.conexion_id()
+                and enlace.conectado_hace_ms(ahora) > config.T_ESPERA_WHITELIST_MQTT_MS)
+    return enlace.caido_hace_ms(ahora) > config.T_RESPALDO_HTTP_MS
+
+
 def _tareas_mqtt(ahora, al_actualizar_whitelist):
     """Trabajo de red con el enlace MQTT. Devuelve True si ya se ocupo de
     todo en esta vuelta; False para caer al respaldo HTTP.
 
-    - La whitelist se sigue bajando por HTTPS cada 15 min. Antes se cierra el
-      enlace: dos sesiones TLS a la vez no entran en el heap del ESP32. Los
-      eventos esperan en flash unos segundos y salen al reconectar.
+    - La whitelist llega por MQTT (retenida, al instante). HTTPS queda de
+      respaldo; antes de usarlo se cierra el enlace: dos sesiones TLS a la vez
+      no entran en el heap del ESP32.
     - Respaldo HTTP de eventos solo si USAR_RESPALDO_HTTP (apagado: ver
       config). Sin MQTT, los eventos esperan en flash.
     """
-    global _degradado, _ultima_whitelist_ms
-    if (_ultima_whitelist_ms is None
-            or ticks_diff(ahora, _ultima_whitelist_ms) >= config.T_REFRESCO_WHITELIST_MS):
-        if ticks_diff(ahora, _proximo_intento_ms) >= 0:
-            _ultima_whitelist_ms = ahora
-            enlace.cerrar("refresco de whitelist por HTTPS")
-            _refrescar_whitelist(al_actualizar_whitelist)
-            return True
+    global _degradado, _ultima_whitelist_ms, _al_actualizar
+    _al_actualizar = al_actualizar_whitelist
+    if _whitelist_por_https(ahora) and ticks_diff(ahora, _proximo_intento_ms) >= 0:
+        _ultima_whitelist_ms = ahora
+        enlace.cerrar("whitelist por HTTPS (respaldo)")
+        _refrescar_whitelist(al_actualizar_whitelist)
+        return True
     intento = enlace.toca_intentar(ahora)
     if enlace.tarea(ahora, rssi(), _degradado):
         _degradado = False

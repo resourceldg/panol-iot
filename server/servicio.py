@@ -68,6 +68,10 @@ def _enriquecer(conn, evento: m.Evento, sesion: m.Sesion | None, cfg: m.Config) 
                 cfg.t_reanudacion_s,
             )
 
+    if evento.tipo == "puerta" and evento.datos.get("inicial"):
+        evento.datos["estado_previo"], _ = repositorio.estado_puerta_actual(
+            conn, evento.ubicacion_id)
+
     if evento.tipo == "pir" and sesion is None:
         evento.datos["ya_alarmado"] = repositorio.alarma_existe_desde(
             conn,

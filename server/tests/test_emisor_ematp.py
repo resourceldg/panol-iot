@@ -206,3 +206,25 @@ class TestDespacho(BaseEmisor):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestApertura(BaseEmisor):
+    """APERTURA_SIN_CREDENCIAL espera un período de gracia (puede ser anulada
+    por el acceso CONCEDIDO que llega enseguida) y las anuladas no salen."""
+
+    def test_recien_ocurrida_espera(self):
+        self.alarma("APERTURA_SIN_CREDENCIAL", hace_min=0)
+        self.assertEqual(emisor_ematp.pendientes(self.conn), [])
+
+    def test_pasada_la_gracia_sale(self):
+        self.alarma("APERTURA_SIN_CREDENCIAL", hace_min=1)
+        self.assertEqual(len(emisor_ematp.pendientes(self.conn)), 1)
+
+    def test_otras_alarmas_no_esperan(self):
+        self.alarma("PRESENCIA_SIN_SESION", hace_min=0)
+        self.assertEqual(len(emisor_ematp.pendientes(self.conn)), 1)
+
+    def test_anulada_no_sale(self):
+        self.alarma("APERTURA_SIN_CREDENCIAL", hace_min=5)
+        self.conn.execute("UPDATE alarmas SET anulada = now()")
+        self.assertEqual(emisor_ematp.pendientes(self.conn), [])

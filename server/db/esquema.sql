@@ -229,6 +229,24 @@ CREATE INDEX IF NOT EXISTS ix_eventos_procesados_recibido ON eventos_procesados 
 -- un arranque sin NTP.
 ALTER TABLE eventos_procesados ADD COLUMN IF NOT EXISTS ocurrido TIMESTAMPTZ;
 ALTER TABLE eventos_procesados ADD COLUMN IF NOT EXISTS via TEXT;
+
+-- Alarma anulada: una APERTURA_SIN_CREDENCIAL que resultó ser el ingreso de
+-- alguien con tarjeta (el acceso CONCEDIDO llegó después). Se conserva la fila
+-- —es auditoría— pero no se manda a EMATP. Ver ReconciliarApertura.
+ALTER TABLE alarmas ADD COLUMN IF NOT EXISTS anulada TIMESTAMPTZ;
+
+-- Tarjetas grabadas con el botón del nodo, esperando aprobación. NO abren:
+-- el nodo solo autoriza lo que está en `credenciales` activas (whitelist).
+-- Se aprueban con `python -m credenciales aprobar <uid> <usuario>`.
+CREATE TABLE IF NOT EXISTS credenciales_pendientes (
+    uid_hex       TEXT PRIMARY KEY,
+    ubicacion_id  TEXT,
+    nodo_id       TEXT,
+    primera_vez   TIMESTAMPTZ NOT NULL,
+    ultima_vez    TIMESTAMPTZ NOT NULL,
+    veces         INTEGER NOT NULL DEFAULT 1,
+    rechazada     TIMESTAMPTZ
+);
 CREATE INDEX IF NOT EXISTS ix_eventos_armario_ts          ON eventos_armario (timestamp);
 CREATE INDEX IF NOT EXISTS ix_alarmas_ts                  ON alarmas (timestamp);
 

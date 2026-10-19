@@ -10,6 +10,7 @@ Esquema de topics
     panol/<ubicacion_id>/<nodo_id>/heartbeat       nodo  -> servidor
     panol/<ubicacion_id>/alarma/<codigo>           servidor -> Node-RED
     panol/<ubicacion_id>/sesion                    servidor -> Node-RED
+    panol/<ubicacion_id>/<nodo_id>/cmd/whitelist   servidor -> nodo (retenido)
 
 La ubicación va en el topic **y** en el payload. Duplicarlo es a propósito:
 el topic permite que Node-RED filtre por pañol sin parsear JSON, y el
@@ -56,6 +57,11 @@ TOPIC_ESTADO_PUENTE = "panol/servidor/puente"
 
 _conn = None
 
+# Whitelist publicada a los nodos (retenida): {topic: payload}. Se vacía al
+# reconectar, así se vuelve a publicar todo (por si el broker perdió lo suyo).
+_whitelists = {}
+INTERVALO_WHITELIST_S = int(os.environ.get("PANOL_INTERVALO_WHITELIST_S", "5"))
+
 
 def log(*args):
     print("[MQTT]", *args, flush=True)
@@ -81,6 +87,7 @@ def al_conectar(cliente, _userdata, _flags, codigo, _props=None):
         log("conexión rechazada, código", str(codigo) + pista)
         return
     log("conectado a", BROKER_HOST, BROKER_PORT)
+    _whitelists.clear()
     # QoS 1 también en la suscripción: si se pidiera 0, el broker degradaría
     # la entrega y se perderían eventos aunque el nodo publique con 1.
     cliente.subscribe([(TOPIC_EVENTOS, 1), (TOPIC_HEARTBEAT, 1)])
@@ -184,6 +191,33 @@ def _republicar(cliente, evento, efectos):
             )
 
 
+# --- Whitelist hacia los nodos -------------------------------------------
+
+
+def publicar_whitelists(cliente, conn) -> int:
+    """Publica a cada nodo la lista de tarjetas activas, RETENIDA, cuando cambia.
+
+    El nodo está suscripto por su conexión MQTT persistente: una aprobación o
+    una baja le llega en segundos, sin que tenga que cortar su enlace para
+    bajar la lista por HTTPS (eso lo dejaba ~9 s sin mirar los sensores). Al
+    ser retenida, un nodo que se reconecta la recibe en el acto.
+    """
+    uids = [f["uid_hex"] for f in conn.execute(
+        "SELECT DISTINCT uid_hex FROM credenciales WHERE activa ORDER BY uid_hex").fetchall()]
+    payload = json.dumps({"uids": uids}, separators=(",", ":"))
+    publicadas = 0
+    for n in conn.execute("SELECT id, ubicacion_id FROM nodos WHERE rol = 'puerta'").fetchall():
+        topic = f"panol/{n['ubicacion_id']}/{n['id']}/cmd/whitelist"
+        if _whitelists.get(topic) == payload:
+            continue
+        info = cliente.publish(topic, payload, qos=1, retain=True)
+        if info.rc == mqtt.MQTT_ERR_SUCCESS:
+            _whitelists[topic] = payload
+            publicadas += 1
+            log("whitelist ->", topic, f"({len(uids)} tarjetas)")
+    return publicadas
+
+
 # --- Arranque ------------------------------------------------------------
 
 
@@ -210,7 +244,20 @@ def main():
             log("esperando al broker:", e)
             time.sleep(3)
 
-    cliente.loop_forever(retry_first_connection=True)
+    # La red de MQTT corre en su hilo; acá, la whitelist (con su propia
+    # conexión a la base: la de los callbacks vive en el otro hilo).
+    cliente.loop_start()
+    conn_wl = None
+    while True:
+        try:
+            if conn_wl is None or conn_wl.closed:
+                conn_wl = repositorio.conectar(DSN)
+            if cliente.is_connected():
+                publicar_whitelists(cliente, conn_wl)
+        except Exception as e:
+            log("whitelist: error", repr(e))
+            conn_wl = None
+        time.sleep(INTERVALO_WHITELIST_S)
 
 
 if __name__ == "__main__":

@@ -52,6 +52,8 @@ class Broker:
         self.cerrar = False       # cierra la conexión
         self.salida = b""         # lo que el cliente va a leer
         self._entrada = b""
+        self.retenidos = {}       # topic -> payload (bytes)
+        self.suscripciones = []
 
     def recibir(self, datos):
         self._entrada += datos
@@ -88,10 +90,25 @@ class Broker:
             self.publicados.append((topic, json.loads(resto), qos, pid))
             if qos and self.auto_ack and not self.mudo:
                 self.salida += b"\x40\x02" + struct.pack("!H", pid)
+        elif tipo == 8:                                 # SUBSCRIBE
+            pid = struct.unpack("!H", cuerpo[:2])[0]
+            i = 2
+            while i < len(cuerpo):
+                lt = struct.unpack("!H", cuerpo[i:i + 2])[0]
+                topic = cuerpo[i + 2:i + 2 + lt].decode()
+                i += 2 + lt + 1
+                self.suscripciones.append(topic)
+                if topic in self.retenidos:             # el retenido sale al suscribirse
+                    self.entregar(topic, self.retenidos[topic])
+            self.salida = bytes([0x90, 3]) + struct.pack("!H", pid) + b"\x00" + self.salida
         elif tipo == 12:                                # PINGREQ
             self.pings += 1
             if not self.mudo:
                 self.salida += b"\xd0\x00"
+
+    def entregar(self, topic, payload):
+        cuerpo = struct.pack("!H", len(topic)) + topic.encode() + payload
+        self.salida += bytes([0x30, len(cuerpo)]) + cuerpo
 
     def acusar(self, pid):
         self.salida += b"\x40\x02" + struct.pack("!H", pid)
@@ -185,7 +202,7 @@ def cargar(**ajustes):
           "ticks_diff": ticks.ticks_diff, "__name__": "enlace"}
     exec(compile(fuente, RUTA, "exec"), ns)
     m = types.SimpleNamespace(**{k: ns[k] for k in ("tarea", "conectado", "cerrar", "caido_hace_ms",
-                                                     "toca_intentar", "estado")})
+                                                     "toca_intentar", "estado", "conexion_id")})
     m.ns = ns
     return m, broker, entorno, ticks
 
@@ -324,6 +341,57 @@ class PruebaEnlace(unittest.TestCase):
         e.cola = [evento(i) for i in range(10)]
         self.correr(m, t, 0.5)
         self.assertEqual(len([p for p in b.publicados if p[2] == 1]), 3)
+
+
+class PruebaSuscripcion(unittest.TestCase):
+    """La whitelist llega por la misma conexión, retenida, al suscribirse."""
+
+    def test_se_suscribe_y_recibe_el_retenido(self):
+        m, b, e, t = cargar()
+        topic = "panol/panol-lab01/panol-lab01-puerta/cmd/whitelist"
+        b.retenidos[topic] = b'{"uids":["CF:8C:11:0E"]}'
+        recibidos = []
+        m.ns["SUSCRIPCIONES"].append(topic)
+        m.ns["al_mensaje"] = lambda tp, pl: recibidos.append((tp, pl))
+        for _ in range(4):
+            t.ms += 50
+            m.tarea(t.ticks_ms())
+        self.assertEqual(b.suscripciones, [topic])
+        self.assertEqual(recibidos, [(topic, b'{"uids":["CF:8C:11:0E"]}')])
+
+    def test_un_cambio_llega_en_caliente_sin_reconectar(self):
+        m, b, e, t = cargar()
+        topic = "panol/x/y/cmd/whitelist"
+        recibidos = []
+        m.ns["SUSCRIPCIONES"].append(topic)
+        m.ns["al_mensaje"] = lambda tp, pl: recibidos.append(pl)
+        for _ in range(3):
+            t.ms += 50
+            m.tarea(t.ticks_ms())
+        b.entregar(topic, b'{"uids":[]}')
+        for _ in range(3):
+            t.ms += 50
+            m.tarea(t.ticks_ms())
+        self.assertEqual(recibidos, [b'{"uids":[]}'])
+        self.assertEqual(b.conexiones, 1)
+        self.assertEqual(m.conexion_id(), 1)
+
+    def test_un_mensaje_que_rompe_el_receptor_no_tumba_el_enlace(self):
+        m, b, e, t = cargar()
+        topic = "panol/x/y/cmd/whitelist"
+        m.ns["SUSCRIPCIONES"].append(topic)
+
+        def roto(tp, pl):
+            raise ValueError("payload raro")
+        m.ns["al_mensaje"] = roto
+        for _ in range(3):
+            t.ms += 50
+            m.tarea(t.ticks_ms())
+        b.entregar(topic, b"basura")
+        for _ in range(3):
+            t.ms += 50
+            m.tarea(t.ticks_ms())
+        self.assertTrue(m.conectado())
 
 
 if __name__ == "__main__":

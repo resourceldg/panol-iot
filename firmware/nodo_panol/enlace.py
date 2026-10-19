@@ -54,6 +54,14 @@ _proximo_intento_ms = 0
 _espera_ms = 1000       # backoff de reconexion: 1, 2, 4 ... hasta el tope
 _desconectado_desde = None
 _ultimo_error = None
+_conectado_desde = None
+_conexion_id = 0        # cambia en cada (re)conexion
+# Mensajes que llegan por las suscripciones: al_mensaje(topic, payload).
+# Lo registra red.py (whitelist); el enlace no sabe que hay adentro.
+al_mensaje = None
+# Topics a los que suscribirse en cada conexion (QoS 0: lo que importa viaja
+# RETENIDO, asi que se recibe de nuevo en cada reconexion).
+SUSCRIPCIONES = []
 
 
 def _log(*args):
@@ -62,6 +70,14 @@ def _log(*args):
 
 def conectado():
     return _conectado
+
+
+def conexion_id():
+    return _conexion_id
+
+
+def conectado_hace_ms(ahora):
+    return ticks_diff(ahora, _conectado_desde) if _conectado and _conectado_desde is not None else 0
 
 
 def caido_hace_ms(ahora):
@@ -120,6 +136,13 @@ def _paquete_publish(topic, payload, qos, pid=0):
         cuerpo += struct.pack("!H", pid)
     cuerpo += payload
     return bytes([0x30 | (qos << 1)]) + _largo(len(cuerpo)) + cuerpo
+
+
+def _paquete_subscribe(pid, topics):
+    cuerpo = struct.pack("!H", pid)
+    for t in topics:
+        cuerpo += _cadena(t) + bytes([0])          # QoS 0 pedido
+    return b"\x82" + _largo(len(cuerpo)) + cuerpo
 
 
 def _siguiente_pid():
@@ -203,7 +226,8 @@ def _procesar():
     """Saca del buffer los paquetes completos y atiende los que importan."""
     global _buf
     while len(_buf) >= 2:
-        tipo = _buf[0] >> 4
+        cab = _buf[0]
+        tipo = cab >> 4
         n, mult, i = 0, 1, 1
         while True:
             if i >= len(_buf):
@@ -220,13 +244,25 @@ def _procesar():
         _buf = _buf[i + n:]
         if tipo == 4 and n >= 2:            # PUBACK
             _acusados.add(struct.unpack("!H", cuerpo[:2])[0])
-        # PINGRESP (13) y otros: solo cuentan como "el broker esta vivo".
+        elif tipo == 3 and n >= 2:          # PUBLISH que llega (suscripciones)
+            lt = struct.unpack("!H", cuerpo[:2])[0]
+            topic = bytes(cuerpo[2:2 + lt]).decode()
+            resto = cuerpo[2 + lt:]
+            if (cab >> 1) & 3:              # QoS 1/2: viene con packet id
+                resto = resto[2:]
+            if al_mensaje is not None:
+                try:
+                    al_mensaje(topic, bytes(resto))
+                except Exception as e:      # un mensaje malo no tumba el enlace
+                    _log("mensaje", topic, "descartado:", e)
+        # SUBACK (9), PINGRESP (13) y otros: solo cuentan como "el broker esta vivo".
 
 
 def _conectar(ahora):
     """Abre TCP + TLS y manda CONNECT. Bloquea (handshake): solo en IDLE."""
     global _sock, _crudo, _buf, _conectado, _enviados, _acusados
     global _espera_ms, _proximo_intento_ms, _ultimo_rx_ms, _desconectado_desde, _ultimo_error
+    global _conectado_desde, _conexion_id
     gc.collect()   # el handshake TLS necesita un bloque grande de heap contiguo
     inicio = ticks_ms()
     try:
@@ -245,6 +281,8 @@ def _conectar(ahora):
             resp += parte
         if resp[0] != 0x20 or resp[3] != 0:
             raise OSError("CONNACK rechazado rc={}".format(resp[3]))
+        if SUSCRIPCIONES:
+            _sock.write(_paquete_subscribe(_siguiente_pid(), SUSCRIPCIONES))
     except Exception as e:
         _ultimo_error = repr(e)
         _log("no conecta:", e, "| reintento en", _espera_ms // 1000, "s")
@@ -256,6 +294,8 @@ def _conectar(ahora):
     _buf = b""
     _enviados, _acusados = [], set()
     _conectado = True
+    _conectado_desde = ticks_ms()
+    _conexion_id += 1
     _espera_ms = 1000
     _desconectado_desde = None
     _ultimo_error = None
